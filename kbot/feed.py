@@ -104,9 +104,10 @@ class WsFeed:
     snapshot after any reconnect or sequence gap, so a missed delta can't corrupt them."""
 
     def __init__(self, url: str, signer: Signer, books: dict[str, OrderBook], spot: SpotStore,
-                 on_lifecycle=None):
+                 on_lifecycle=None, on_index=None):
         self.url, self.signer, self.books, self.spot = url, signer, books, spot
         self.on_lifecycle = on_lifecycle or (lambda msg: None)
+        self.on_index = on_index or (lambda msg, data, recv_ts: None)
         self.tickers: set[str] = set()
         self.index_ids: set[str] = set()
         self.connected = False
@@ -168,6 +169,7 @@ class WsFeed:
             avg = msg.get("avg_60s_data") or {}
             if avg.get("value"):
                 self.spot.avg60[msg["index_id"]] = (now, float(avg["value"]))
+            self.on_index(msg, data, now)
         elif typ == "market_lifecycle_v2":
             self.on_lifecycle(msg)
         elif typ == "error":

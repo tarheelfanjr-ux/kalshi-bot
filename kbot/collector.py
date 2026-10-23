@@ -23,7 +23,7 @@ import httpx
 from .backtest import Candle, MarketData
 from .client import PublicClient
 from .db import DB
-from .discovery import MarketInfo, is_short_window, num
+from .discovery import MarketInfo, is_short_window, num, ts
 
 log = logging.getLogger(__name__)
 
@@ -65,7 +65,9 @@ async def collect_history(client: PublicClient, db: DB, series: list[str], max_m
         meta = await client.series(s) or {}
         seen = 0
         todo: list[MarketInfo] = []
-        sources = [client.markets(series_ticker=s, status="settled"), client.historical_markets(series_ticker=s)]
+        window = {"min_close_ts": int(since_ts)} if since_ts else {}
+        sources = [client.markets(series_ticker=s, status="settled", **window),
+                   client.historical_markets(series_ticker=s, **window)]
         for it in sources:
             async for m in it:
                 info = MarketInfo.from_api(m, s, meta.get("fee_type", "quadratic"),
@@ -108,6 +110,27 @@ async def collect_history(client: PublicClient, db: DB, series: list[str], max_m
         log.info("%s: %d markets with candles", s, seen)
     db.event("collect_history", series=series, counts=counts)
     return counts
+
+
+async def collect_trades(client: PublicClient, db: DB, since_ts: float) -> int:
+    """Every trade of the stored settled markets closing at or after since_ts, summed per second,
+    price and taker side. Resumable: markets that already have trade rows are skipped."""
+    cut = await client.historical_cutoff()
+    cutoff = ts(cut.get("trades_created_ts")) or 0.0
+    todo = db.q("SELECT ticker, open_ts, close_ts FROM markets m WHERE result IN ('yes','no') AND close_ts >= ? "
+                "AND NOT EXISTS (SELECT 1 FROM trades t WHERE t.ticker = m.ticker) ORDER BY close_ts", (since_ts,))
+    for m in todo:
+        agg: dict[tuple, list] = defaultdict(lambda: [0.0, 0])
+        # A market that straddles the historical cutoff has trades on both endpoints.
+        for historical in [h for h, use in ((True, m["open_ts"] < cutoff), (False, m["close_ts"] > cutoff)) if use]:
+            async for t in client.trades(historical=historical, ticker=m["ticker"]):
+                a = agg[(int(ts(t["created_time"])), t["taker_side"], round(float(t["yes_price_dollars"]), 4))]
+                a[0] += float(t["count_fp"])
+                a[1] += 1
+        with db.tx():
+            for (sec, side, price), (count, n) in agg.items():
+                db.x("INSERT OR REPLACE INTO trades VALUES(?,?,?,?,?,?)", (m["ticker"], sec, side, price, count, n))
+    return len(todo)
 
 
 async def collect_coinbase_spot(db: DB, product: str, index_id: str, start: float, end: float,

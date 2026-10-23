@@ -54,6 +54,27 @@ kbot research --open-holdout     # ONLY once a strategy passes validation; each 
 
 Read `verdict` in the report. "NO STRATEGY PASSED" means do not trade.
 
+### Prospective experiments
+
+E1 and E2 ([EXPERIMENTS.md](EXPERIMENTS.md)) use only data recorded after 2026-10-23, in
+`data/prospective.sqlite`. The recorder is read-only. It never builds a trading client.
+
+```bash
+kbot record                      # keep running: books every 2 s, Coinbase ticks, RTI ticks if keyed,
+                                 # plus settled markets, candles and trades every 15 minutes
+kbot backfill                    # fills download gaps (markets, candles, trades) since 2026-10-24
+kbot experiment status           # coverage, dates, recorder heartbeat, fee state. No outcomes
+kbot experiment evaluate E2 --interim   # once, after 2026-11-22. Futility only
+kbot experiment evaluate E2 --final     # once, after the end date -> reports/experiment-E2.json
+kbot experiment evaluate E1 --final     # once, after D0 + 56 days
+```
+
+E1 needs the read-only production key above, set on the machine that runs `kbot record`. Without
+it E1 shows "not started" and everything else still records. Run the recorder on a machine that
+stays on (sleep off), or as a service like the one in section 4 with `ExecStart=... -m kbot record`.
+A one-hour test wrote about 3 MB, so plan on roughly 100 MB a day. E2's primary test needs only
+`kbot backfill`, which can run any time later.
+
 ## 4. Continuous paper trading
 
 ```bash

@@ -56,6 +56,13 @@ CREATE TABLE IF NOT EXISTS snapshots (
 CREATE INDEX IF NOT EXISTS snapshots_ticker_ts ON snapshots(ticker, ts);
 CREATE TABLE IF NOT EXISTS spot (
   index_id TEXT NOT NULL, ts REAL NOT NULL, value REAL NOT NULL, PRIMARY KEY (index_id, ts));
+-- Prospective experiments (kbot/experiments.py). Trades are summed per second, price and taker side.
+CREATE TABLE IF NOT EXISTS trades (
+  ticker TEXT NOT NULL, ts INTEGER NOT NULL, taker_side TEXT NOT NULL, yes_price REAL NOT NULL,
+  count REAL NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (ticker, ts, taker_side, yes_price)) WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS index_ticks (
+  index_id TEXT NOT NULL, source TEXT NOT NULL, recv_ts REAL NOT NULL, src_ts REAL, value REAL NOT NULL,
+  avg60 REAL, final_avg REAL, PRIMARY KEY (index_id, source, recv_ts)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS equity (
   ts REAL NOT NULL, mode TEXT NOT NULL, cash REAL, open_value REAL, equity REAL);
 """

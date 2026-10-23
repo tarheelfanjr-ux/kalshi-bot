@@ -37,8 +37,8 @@ Point = namedtuple("Point", "ticker series window ts tau bid ask y period q sd s
                             "next_bid next_ask")
 
 
-def ci(values, clusters, n_boot: int = 2000, seed: int = 1):
-    """95% CI of the mean, resampling whole settlement windows (markets closing together)."""
+def ci(values, clusters, n_boot: int = 2000, seed: int = 1, level: float = 0.95):
+    """CI of the mean (95% by default), resampling whole settlement windows (markets closing together)."""
     s, k = defaultdict(float), defaultdict(int)
     for v, c in zip(values, clusters):
         s[c] += v
@@ -49,7 +49,8 @@ def ci(values, clusters, n_boot: int = 2000, seed: int = 1):
     rng = random.Random(seed)
     stats = sorted(sum(s[c] for c in pick) / sum(k[c] for c in pick)
                    for pick in (rng.choices(keys, k=len(keys)) for _ in range(n_boot)))
-    return [round(stats[int(0.025 * n_boot)], 4), round(stats[int(0.975 * n_boot) - 1], 4)]
+    tail = (1 - level) / 2
+    return [round(stats[round(tail * n_boot)], 4), round(stats[round((1 - tail) * n_boot) - 1], 4)]
 
 
 def _solve(A, b):

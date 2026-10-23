@@ -103,6 +103,40 @@ def cmd_audit(s, a):
     print("full report: reports/edge-audit.json")
 
 
+def cmd_record(s, a):
+    from .db import DB
+    from .recorder import Recorder
+    asyncio.run(Recorder(s, DB(a.db), book_every_s=a.book_every).run())
+
+
+def cmd_backfill(s, a):
+    from .client import make_public_client
+    from .db import DB
+    from .experiments import PROSPECTIVE_START
+    from .recorder import backfill
+
+    async def go():
+        c = make_public_client(s, max_retries=8, read_tokens_per_s=30)
+        print(await backfill(c, DB(a.db), PROSPECTIVE_START), "markets got trades")
+        await c.close()
+    asyncio.run(go())
+
+
+def cmd_experiment(s, a):
+    from .db import DB
+    from .experiments import evaluate, status
+    db = DB(a.db)
+    if a.action == "status":
+        print(json.dumps(status(db), indent=2, default=str))
+        return
+    if not a.name:
+        sys.exit("name the experiment: kbot experiment evaluate E1 --final")
+    rep = evaluate(db, a.name, final=a.final, force=a.force, interim=a.interim)
+    print(json.dumps({k: rep[k] for k in ("label", "experiment", "spec_hash", "final_openings", "warning",
+                                          "interim") if k in rep}, indent=2))
+    print(f"full report: reports/experiment-{a.name}{'-interim' if a.interim else ''}.json")
+
+
 def cmd_backtest(s, a):
     from .backtest import Costs, chronological_split, metrics, run
     from .collector import load_markets, load_spot
@@ -234,6 +268,18 @@ def main(argv=None):
     c.add_argument("--open-holdout", action="store_true")
     c = sub.add_parser("audit", help="edge audit: backtest checks, failure mode, baselines, calibration")
     c.add_argument("--open-holdout", action="store_true")
+    c = sub.add_parser("record", help="record books, CF Benchmarks and Coinbase ticks for the prospective tests")
+    c.add_argument("--db", default="data/prospective.sqlite")
+    c.add_argument("--book-every", type=float, default=2.0)
+    c = sub.add_parser("backfill", help="download settled markets, candles and trades since 2026-10-24")
+    c.add_argument("--db", default="data/prospective.sqlite")
+    c = sub.add_parser("experiment", help="prospective experiments E1 and E2: status or evaluate")
+    c.add_argument("action", choices=["status", "evaluate"])
+    c.add_argument("name", nargs="?", choices=["E1", "E2"])
+    c.add_argument("--db", default="data/prospective.sqlite")
+    c.add_argument("--final", action="store_true", help="the one valid reading, after the end date")
+    c.add_argument("--interim", action="store_true", help="E2's single futility look after day 28")
+    c.add_argument("--force", action="store_true", help="read early: counted and labelled not valid")
     c = sub.add_parser("backtest")
     c.add_argument("--strategy", default="fair_value")
     c.add_argument("--split", default="validation", choices=["train", "validation", "all_but_holdout"])
