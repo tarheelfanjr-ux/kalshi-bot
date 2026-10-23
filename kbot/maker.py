@@ -150,7 +150,8 @@ class MakerEngine:
         if not yb or not ya:
             return self._log(m.ticker, "skip: one-sided book")
         lo, hi = sp["price_band"]
-        end = min(now + sp["grid_s"], m.close_ts)
+        # Lives until the next minute's requote, with slack for loop jitter, so an unchanged price keeps its place.
+        end = min((now // sp["grid_s"] + 1) * sp["grid_s"] + 5, m.close_ts)
         for side in ("yes", "no"):
             price, queue = book.best_bid(side)
             price = round(price, 4)
@@ -196,7 +197,7 @@ class MakerEngine:
             seen = self._seen.setdefault(t, {})
             new = []
             for x in got:
-                if x["trade_id"] not in seen:
+                if x["trade_id"] not in seen and not x.get("is_block_trade"):
                     seen[x["trade_id"]] = asked
                     new.append((ts(x["created_time"]), x["taker_side"], float(x["yes_price_dollars"])))
             for k in [k for k, v in seen.items() if v < asked - 300]:

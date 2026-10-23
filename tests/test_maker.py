@@ -93,8 +93,10 @@ async def test_maker_quotes_fill_only_on_trade_through_and_settle(tmp_path):
 
 async def test_requote_ends_old_quote_and_cancels_its_order_after_the_tape_is_read(tmp_path):
     app, pub, now = maker_app(tmp_path)
+    now = now // 60 * 60 + 1                          # one second into a minute
     await app.discovery.refresh()
     m = app.discovery.markets["KXBTC15M-M"]
+    app.maker.adapter.max_age = 1e9                   # the paper exchange checks book age on the real clock
     app.books[m.ticker] = book(m.ticker, 0.20, 0.24, ts=now)
     await app.maker.quote(m, now, True, "ok")
     app.books[m.ticker] = book(m.ticker, 0.20, 0.24, ts=now + 30)

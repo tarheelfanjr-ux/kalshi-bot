@@ -128,6 +128,8 @@ async def collect_trades(client: PublicClient, db: DB, since_ts: float, tickers:
         # A market that straddles the historical cutoff has trades on both endpoints.
         for historical in [h for h, use in ((True, m["open_ts"] < cutoff), (False, m["close_ts"] > cutoff)) if use]:
             async for t in client.trades(historical=historical, ticker=m["ticker"]):
+                if t.get("is_block_trade"):         # negotiated off the book: says nothing about resting bids
+                    continue
                 a = agg[(int(ts(t["created_time"])), t["taker_side"], round(float(t["yes_price_dollars"]), 4))]
                 a[0] += float(t["count_fp"])
                 a[1] += 1
