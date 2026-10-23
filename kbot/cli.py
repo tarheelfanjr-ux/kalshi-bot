@@ -87,8 +87,11 @@ def cmd_collect_pyth(s, a):
         if series not in PYTH_SYMBOLS:
             continue
         sym = PYTH_SYMBOLS[series]
-        n = asyncio.run(collect_pyth(db, sym, time.time() - a.days * 86400, time.time(),
-                                     api_key=os.environ.get("PYTH_API_KEY"), channel=a.channel))
+        try:
+            n = asyncio.run(collect_pyth(db, sym, time.time() - a.days * 86400, time.time(),
+                                         api_key=os.environ.get("PYTH_API_KEY"), channel=a.channel))
+        except (ValueError, PermissionError) as e:
+            raise SystemExit(f"{series}: {e}")
         print(f"{series}: {n} one-minute Pyth bars for {sym}; floor_strike match {pyth_strike_check(db, series)}")
 
 

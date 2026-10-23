@@ -50,6 +50,7 @@ rep = {"label": ("EXPLORATION, PROXY (Coinbase PAXG-USD, not Pyth), gold train h
                          str(pd.Timestamp(m.close_ts.max(), unit="s"))],
        "usable_checkpoints": round(float(ev.ok.mean()), 3), "fits": w, "information": e3.info(ev),
        "taker": e3.rec(t), "taker_by_checkpoint": e3.rec(t, "s"),
+       "taker_costing_at_most_25c": e3.rec(t[t.price + t.fee <= 0.25]),
        "stress": {"latency_60s": e3.rec(e3.taker(ev, book="next")), "stale_proxy_60s": e3.rec(e3.taker(evs)),
                   "slippage_0c": e3.rec(e3.taker(ev, slip=0.0))}}
 json.dump(rep, open(f"gold-proxy-results-{P}.json", "w"), indent=1, default=float)

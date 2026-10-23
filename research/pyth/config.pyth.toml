@@ -1,0 +1,6 @@
+# Data-only config for E3: `kbot --config research/pyth/config.pyth.toml collect-pyth --days 70`.
+# Put pyth4-history.sqlite (project files, kalshi-bot/data) at db_path first. No orders are ever placed.
+mode = "paper"
+data_env = "production"
+db_path = "data/pyth4-history.sqlite"
+series = ["KXGOLD15M", "KXSILVER15M", "KXWTI15M", "KXNATGAS15M"]
