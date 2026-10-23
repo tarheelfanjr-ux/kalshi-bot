@@ -29,6 +29,16 @@ Remaining restrictions: WebSocket returns 401 without an API key. Coinbase and e
 source are blocked by the environment's network policy. Unauthenticated Kalshi reads are throttled
 near 3.5 req/s.
 
+### Maker strategy (added 2026-10-23, after the audit)
+
+E2's maker rule (bid at the best YES and NO bid each minute, fills only on trades through our
+price) also has no edge so far. HISTORICAL BACKTEST on a seeded sample of 1,298 markets that closed
+before the holdout: 2,596 fills, -1.82 cents per contract before fees (95% CI -2.06 to -1.59),
+negative in every series, both halves and every latency variant. Markets where both sides filled
+on the first quote earned +1.28 cents per pair (63%). The rest lost 12.06 cents per pair (37%).
+Report: `reports/maker-history-2026-10-23.json` in project files. E2's own frozen test on data after
+Oct 24 is unchanged. The maker bot runs in paper mode. Go/no-go and next steps: [GO_LIVE.md](GO_LIVE.md).
+
 ## Phase reports
 
 | Phase | Implemented | Tested | Passed | Failed / incomplete |
@@ -50,8 +60,8 @@ near 3.5 req/s.
 | Category | Status |
 |---|---|
 | Historical backtest | Run on 90 days of real data (2026-10-23). No strategy passed. See bottom line. |
-| Paper trading | **Not run.** Blocked by network. |
-| Kalshi demo account | **Not run.** Needs your demo key and network. |
+| Paper trading | Maker bot running on live data since 2026-10-23 18:48 UTC (short test, see GO_LIVE.md). |
+| Kalshi demo account | **Not run.** Needs your demo key. The maker order path is tested against a mocked exchange only. |
 | Production | Disabled. Never run. |
 
 ## What the research already says without data

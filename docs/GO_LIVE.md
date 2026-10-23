@@ -1,8 +1,10 @@
 # Go-live runbook: maker strategy
 
 Status on 2026-10-23: **NO-GO for real money.** The bot works in paper mode. The real-order path is
-built and tested against a mocked exchange. No evidence yet shows the strategy makes money after
-costs. The go/no-go report has the reasons and what would change them:
+built and tested against a mocked exchange. The strategy has no edge so far: on 1,298 markets that
+closed before the audit holdout, the maker rule lost 1.82 cents per contract before fees (95% CI
+-2.06 to -1.59). It earns when both sides fill on the first quote and loses more when only one side
+fills before the price runs. The go/no-go report has the details and what would change the verdict:
 [Kalshi bot go/no-go](https://claude.ai/artifact/DB1Pm7VzzJCgucDz6b7xcY).
 
 Three stages. Each one has its own guard, and only you can lift it.
