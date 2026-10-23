@@ -162,6 +162,11 @@ class PublicClient(_Base):
         return (await self._request("GET", f"/markets/{ticker}/orderbook", params=params)).get(
             "orderbook_fp") or {}
 
+    async def orderbooks(self, tickers: list[str]) -> dict[str, dict]:
+        """Full books for up to 100 markets in one call. Works without a key."""
+        data = await self._request("GET", "/markets/orderbooks", params={"tickers": tickers})
+        return {o["ticker"]: o.get("orderbook_fp") or {} for o in data.get("orderbooks") or []}
+
     async def historical_candlesticks(self, ticker: str, start_ts: int, end_ts: int, period: int = 1):
         """One market. Needed for markets older than the batch endpoint serves (about 2 months).
         Prices here come as `close`, not `close_dollars`."""

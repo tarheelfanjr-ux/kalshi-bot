@@ -19,7 +19,9 @@ from .config import ENVIRONMENTS, Settings
 from .db import DB
 from .discovery import Discovery, eligible
 from .execution import KalshiAdapter, OrderManager, PaperAdapter
+from .experiments import SERIES
 from .feed import UNDERLYING, CoinbaseSpot, RestBookPoller, SpotStore, WsFeed
+from .maker import SHADOW_REASON, MakerEngine
 from .model import realized_sigma
 from .notify import Notifier
 from .risk import RiskManager
@@ -32,6 +34,9 @@ class App:
     def __init__(self, s: Settings, db: DB | None = None):
         if s.mode not in ("paper", "demo", "production"):
             raise ValueError("the live app runs in paper, demo, or production mode")
+        maker = s.strategy.name == "maker"
+        if maker and s.mode != "paper":
+            raise ValueError("the maker strategy runs in paper mode only. Only its owner lifts this (docs/GO_LIVE.md).")
         self.s = s
         self.db = db or DB(s.db_path)
         self.notify = Notifier(self.db, s.notify_webhook)
@@ -39,8 +44,9 @@ class App:
         self.books: dict[str, OrderBook] = {}
         self.spot = SpotStore(self.db)
         self.mid_hist: dict[str, list[tuple[float, float]]] = {}
-        self.discovery = Discovery(self.public, self.db, s.series or None)
-        self.strategy = make(s.strategy.name, s.strategy)
+        self.discovery = Discovery(self.public, self.db, s.series or (list(SERIES) if maker else None))
+        # In maker mode fair_value runs beside it as a shadow benchmark: logged, never traded.
+        self.strategy = make("fair_value" if maker else s.strategy.name, s.strategy)
         self.signer = None
         if s.api_key_id and s.private_key_path:
             self.signer = make_signer(s)
@@ -59,6 +65,9 @@ class App:
             self.account: AccountClient | None = trading
         self.om = OrderManager(self.db, adapter, self.notify)
         self.risk = RiskManager(self.db, s.risk, s.mode)
+        self.maker = MakerEngine(self.db, self.discovery, self.om, self.risk, self.books, adapter) if maker else None
+        self._shadowed = {r["ticker"] for r in self.db.q(
+            "SELECT DISTINCT ticker FROM signals WHERE strategy='fair_value' AND reason=?", (SHADOW_REASON,))}
         self.ws = None
         if data_signer:
             self.ws = WsFeed(ENVIRONMENTS[s.data_env]["ws"], data_signer, self.books, self.spot,
@@ -111,6 +120,12 @@ class App:
 
     async def shutdown(self, tasks) -> None:
         log.info("shutting down")
+        if self.maker:      # resting bids must not outlive the process that manages them
+            try:
+                await self.om.cancel_open_entries("shutdown")
+            except Exception as e:
+                log.error("cancel on shutdown failed: %s. Check open orders on Kalshi.", e)
+                self.notify(f"could not cancel resting orders on shutdown: {e!r}"[:300])
         if self.ws:
             self.ws.stop()
         for t in tasks:
@@ -192,6 +207,8 @@ class App:
             self.risk.trip(t)
             await self.om.cancel_open_entries(t)
             self.notify(f"risk limit hit, entries halted until reviewed: {t}")
+        if self.maker:
+            await self.maker.tick(markets, now, healthy, reason)
         for t in active:
             await self.evaluate(markets[t], now, healthy, reason)
         if self._every("equity", 60):
@@ -229,6 +246,11 @@ class App:
                 if m.seconds_left(now) <= 60 and idx in self.spot.avg60:
                     snap.known_avg = self.spot.avg60[idx][1]
         cand = self.strategy.evaluate(snap)
+        if self.maker:      # shadow benchmark: log the first fair_value signal per market, never trade it
+            if isinstance(cand, Candidate) and m.ticker not in self._shadowed:
+                self._shadowed.add(m.ticker)
+                self._signal(cand, m.ticker, SHADOW_REASON)
+            return
         if not isinstance(cand, Candidate):
             if self._every(f"rej:{m.ticker}:{cand.reason[:20]}", 30):   # throttle repeated identical rejections
                 self._signal(None, m.ticker, cand.reason)

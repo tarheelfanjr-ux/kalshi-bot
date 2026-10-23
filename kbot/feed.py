@@ -70,14 +70,16 @@ class RestBookPoller:
         self.last_ok = 0.0
 
     async def poll(self, tickers: list[str]) -> None:
-        for t in tickers:
+        for i in range(0, len(tickers), 100):          # one request per 100 books
             try:
-                ob = await self.client.orderbook(t)
+                got = await self.client.orderbooks(tickers[i:i + 100])
             except Exception as e:
-                log.warning("orderbook %s failed: %s", t, e)
+                log.warning("orderbooks failed: %s", e)
                 continue
-            self.books[t] = OrderBook.from_rest(t, ob)
-            self.last_ok = time.time()
+            now = time.time()
+            for t, ob in got.items():
+                self.books[t] = OrderBook.from_rest(t, ob, now)
+            self.last_ok = now
 
 
 class CoinbaseSpot:
@@ -104,9 +106,10 @@ class WsFeed:
     snapshot after any reconnect or sequence gap, so a missed delta can't corrupt them."""
 
     def __init__(self, url: str, signer: Signer, books: dict[str, OrderBook], spot: SpotStore,
-                 on_lifecycle=None):
+                 on_lifecycle=None, on_index=None):
         self.url, self.signer, self.books, self.spot = url, signer, books, spot
         self.on_lifecycle = on_lifecycle or (lambda msg: None)
+        self.on_index = on_index or (lambda msg, data, recv_ts: None)
         self.tickers: set[str] = set()
         self.index_ids: set[str] = set()
         self.connected = False
@@ -168,6 +171,7 @@ class WsFeed:
             avg = msg.get("avg_60s_data") or {}
             if avg.get("value"):
                 self.spot.avg60[msg["index_id"]] = (now, float(avg["value"]))
+            self.on_index(msg, data, now)
         elif typ == "market_lifecycle_v2":
             self.on_lifecycle(msg)
         elif typ == "error":

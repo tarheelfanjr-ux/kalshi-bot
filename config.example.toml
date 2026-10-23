@@ -17,9 +17,10 @@ max_open_risk_pct = 0.05
 max_daily_loss_pct = 0.02
 max_consecutive_losses = 5
 max_open_positions = 3
+max_market_inventory = 1    # maker: contracts held per market side
 
 [strategy]
-name = "fair_value"         # fair_value | momentum | mean_reversion | market_implied | no_trade
+name = "fair_value"         # fair_value | maker (paper only) | momentum | mean_reversion | market_implied | no_trade
 min_net_edge = 0.03         # dollars per contract after fees and the uncertainty buffer
 min_seconds_left = 90
 max_seconds_left = 840

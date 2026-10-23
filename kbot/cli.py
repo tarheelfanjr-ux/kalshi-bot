@@ -50,7 +50,7 @@ def cmd_discover(s, a):
 
 def cmd_collect(s, a):
     from .client import make_public_client
-    from .collector import collect_history
+    from .collector import collect_history, collect_trades
     from .discovery import Discovery
 
     async def go():
@@ -59,8 +59,12 @@ def cmd_collect(s, a):
         c = make_public_client(s, max_retries=8, read_tokens_per_s=30)
         db = _db(s)
         series = s.series or await Discovery(c, db).find_series()
-        print(await collect_history(c, db, series, max_markets=a.max_markets,
-                                    since_ts=time.time() - a.days * 86400))
+        since = time.time() - a.days * 86400
+        print(await collect_history(c, db, series, max_markets=a.max_markets, since_ts=since))
+        if a.trades:
+            print(await collect_trades(c, db, since, tickers=[r["ticker"] for r in db.q(
+                f"SELECT ticker FROM markets WHERE series IN ({','.join('?' * len(series))})", tuple(series))]),
+                "markets got trades")
         await c.close()
     asyncio.run(go())
 
@@ -73,6 +77,19 @@ def cmd_collect_spot(s, a):
         idx, product = UNDERLYING[series]
         n = asyncio.run(collect_coinbase_spot(db, product, idx, time.time() - a.days * 86400, time.time()))
         print(f"{series}: {n} one-minute Coinbase points stored as proxy for {idx}")
+
+
+def cmd_collect_pyth(s, a):
+    import os
+    from .collector import PYTH_SYMBOLS, collect_pyth, pyth_strike_check
+    db = _db(s)
+    for series in (s.series or list(PYTH_SYMBOLS)):
+        if series not in PYTH_SYMBOLS:
+            continue
+        sym = PYTH_SYMBOLS[series]
+        n = asyncio.run(collect_pyth(db, sym, time.time() - a.days * 86400, time.time(),
+                                     api_key=os.environ.get("PYTH_API_KEY")))
+        print(f"{series}: {n} one-minute Pyth bars for {sym}; floor_strike match {pyth_strike_check(db, series)}")
 
 
 def cmd_import_spot(s, a):
@@ -101,6 +118,63 @@ def cmd_audit(s, a):
     rep = audit(_db(s), s, open_holdout=a.open_holdout)
     print(json.dumps({k: rep[k] for k in ("label", "strategy", "markets", "split") if k in rep}, indent=2))
     print("full report: reports/edge-audit.json")
+
+
+def cmd_record(s, a):
+    from .db import DB
+    from .recorder import Recorder
+    asyncio.run(Recorder(s, DB(a.db), book_every_s=a.book_every).run())
+
+
+def cmd_backfill(s, a):
+    from .client import make_public_client
+    from .db import DB
+    from .experiments import PROSPECTIVE_START
+    from .recorder import backfill
+
+    async def go():
+        c = make_public_client(s, max_retries=8, read_tokens_per_s=30)
+        print(await backfill(c, DB(a.db), PROSPECTIVE_START), "markets got trades")
+        await c.close()
+    asyncio.run(go())
+
+
+def cmd_experiment(s, a):
+    from .db import DB
+    from .experiments import evaluate, status
+    db = DB(a.db)
+    if a.action == "status":
+        print(json.dumps(status(db), indent=2, default=str))
+        return
+    if not a.name:
+        sys.exit("name the experiment: kbot experiment evaluate E1 --final")
+    rep = evaluate(db, a.name, final=a.final, force=a.force, interim=a.interim)
+    print(json.dumps({k: rep[k] for k in ("label", "experiment", "spec_hash", "final_openings", "warning",
+                                          "interim") if k in rep}, indent=2))
+    print(f"full report: reports/experiment-{a.name}{'-interim' if a.interim else ''}.json")
+
+
+def cmd_maker_history(s, a):
+    from pathlib import Path
+    from .client import make_public_client
+    from .db import DB
+    from .maker import history
+    if not Path(a.db).exists():
+        sys.exit(f"{a.db} not found. It needs settled markets and minute candles: copy the 90-day dataset "
+                 "there, or run `kbot collect --days 90` with db_path pointing at it.")
+
+    async def go():
+        c = None if a.no_download else make_public_client(s, max_retries=8, read_tokens_per_s=20)
+        rep = await history(c, DB(a.db))
+        if c:
+            await c.close()
+        return rep
+    rep = asyncio.run(go())
+    Path("reports").mkdir(exist_ok=True)
+    Path("reports/maker-history.json").write_text(json.dumps(rep, indent=2, default=str))
+    print(json.dumps({k: rep.get(k) for k in ("label", "sample", "markets", "missing")}, indent=2))
+    print(json.dumps(rep.get("primary", {}).get("net_zero_fee"), indent=2))
+    print("full report: reports/maker-history.json")
 
 
 def cmd_backtest(s, a):
@@ -133,6 +207,9 @@ def cmd_status(s, a):
     p = st["performance"]
     print({k: p[k] for k in ("label", "settled_trades", "net_pnl", "win_rate", "max_drawdown", "fees")})
     print(f"open positions: {st['positions']}\noutstanding orders: {st['orders']}")
+    if s.strategy.name == "maker":
+        from .maker import format_report, report
+        print("\n" + format_report(report(_db(s), st["mode"], s.risk.bankroll)))
 
 
 def cmd_pause(s, a):
@@ -224,8 +301,11 @@ def main(argv=None):
     c = sub.add_parser("collect", help="download settled markets + minute candles")
     c.add_argument("--max-markets", type=int, default=3000)
     c.add_argument("--days", type=float, default=60)
+    c.add_argument("--trades", action="store_true", help="also download public trades for those markets")
     c = sub.add_parser("collect-spot", help="download Coinbase 1-minute prices as an index proxy")
     c.add_argument("--days", type=float, default=60)
+    c = sub.add_parser("collect-pyth", help="download Pyth 1-minute bars for the Pyth-settled series")
+    c.add_argument("--days", type=float, default=70)
     c = sub.add_parser("import-spot", help="import a CSV of ts,price for an index")
     c.add_argument("csv")
     c.add_argument("--index", required=True)
@@ -234,6 +314,21 @@ def main(argv=None):
     c.add_argument("--open-holdout", action="store_true")
     c = sub.add_parser("audit", help="edge audit: backtest checks, failure mode, baselines, calibration")
     c.add_argument("--open-holdout", action="store_true")
+    c = sub.add_parser("record", help="record books, CF Benchmarks and Coinbase ticks for the prospective tests")
+    c.add_argument("--db", default="data/prospective.sqlite")
+    c.add_argument("--book-every", type=float, default=2.0)
+    c = sub.add_parser("backfill", help="download settled markets, candles and trades since 2026-10-24")
+    c.add_argument("--db", default="data/prospective.sqlite")
+    c = sub.add_parser("experiment", help="prospective experiments E1 and E2: status or evaluate")
+    c.add_argument("action", choices=["status", "evaluate"])
+    c.add_argument("name", nargs="?", choices=["E1", "E2"])
+    c.add_argument("--db", default="data/prospective.sqlite")
+    c.add_argument("--final", action="store_true", help="the one valid reading, after the end date")
+    c.add_argument("--interim", action="store_true", help="E2's single futility look after day 28")
+    c.add_argument("--force", action="store_true", help="read early: counted and labelled not valid")
+    c = sub.add_parser("maker-history", help="maker rule on downloadable history (candles + public trades)")
+    c.add_argument("--db", default="data/maker-history.sqlite", help="a copy with markets and candles; trades are added")
+    c.add_argument("--no-download", action="store_true")
     c = sub.add_parser("backtest")
     c.add_argument("--strategy", default="fair_value")
     c.add_argument("--split", default="validation", choices=["train", "validation", "all_but_holdout"])

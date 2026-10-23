@@ -4,6 +4,7 @@ Sources (all real, nothing synthesized):
   * Kalshi settled markets for each 15M series (live + /historical endpoints)
   * Kalshi 1-minute candlesticks for each market (top-of-book bid/ask per minute)
   * Coinbase 1-minute candles as a *proxy* for the CF Benchmarks settlement index
+  * Pyth Benchmarks 1-minute bars, the settlement source of the metals, FX, Brent and yield series
   * Any CSV of (timestamp, price) the operator supplies, e.g. licensed index data
 """
 from __future__ import annotations
@@ -21,9 +22,9 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from .backtest import Candle, MarketData
-from .client import PublicClient
+from .client import KalshiError, PublicClient
 from .db import DB
-from .discovery import MarketInfo, is_short_window, num
+from .discovery import MarketInfo, is_short_window, num, ts
 
 log = logging.getLogger(__name__)
 
@@ -65,7 +66,9 @@ async def collect_history(client: PublicClient, db: DB, series: list[str], max_m
         meta = await client.series(s) or {}
         seen = 0
         todo: list[MarketInfo] = []
-        sources = [client.markets(series_ticker=s, status="settled"), client.historical_markets(series_ticker=s)]
+        window = {"min_close_ts": int(since_ts)} if since_ts else {}
+        sources = [client.markets(series_ticker=s, status="settled", **window),
+                   client.historical_markets(series_ticker=s, **window)]
         for it in sources:
             async for m in it:
                 info = MarketInfo.from_api(m, s, meta.get("fee_type", "quadratic"),
@@ -94,7 +97,12 @@ async def collect_history(client: PublicClient, db: DB, series: list[str], max_m
             got = await client.batch_candlesticks([m.ticker for m in chunk], *_batch_window(chunk))
             for m in chunk:
                 if not got.get(m.ticker):
-                    got[m.ticker] = await client.historical_candlesticks(m.ticker, *_batch_window([m]))
+                    try:
+                        got[m.ticker] = await client.historical_candlesticks(m.ticker, *_batch_window([m]))
+                    except KalshiError as e:
+                        if e.status != 404:
+                            raise
+                        got[m.ticker] = []      # a recent market with no candles is not in the archive either
             by_ticker = {m.ticker: m for m in chunk}
             with db.tx():
                 for ticker, cs in got.items():
@@ -108,6 +116,33 @@ async def collect_history(client: PublicClient, db: DB, series: list[str], max_m
         log.info("%s: %d markets with candles", s, seen)
     db.event("collect_history", series=series, counts=counts)
     return counts
+
+
+async def collect_trades(client: PublicClient, db: DB, since_ts: float, tickers: list[str] | None = None) -> int:
+    """Every trade of the stored settled markets closing at or after since_ts (only `tickers`, if
+    given), summed per second, price and taker side. Resumable: markets that already have trade
+    rows are skipped."""
+    cut = await client.historical_cutoff()
+    cutoff = ts(cut.get("trades_created_ts")) or 0.0
+    todo = db.q("SELECT ticker, open_ts, close_ts FROM markets m WHERE result IN ('yes','no') AND close_ts >= ? "
+                "AND NOT EXISTS (SELECT 1 FROM trades t WHERE t.ticker = m.ticker) ORDER BY close_ts", (since_ts,))
+    if tickers is not None:
+        keep = set(tickers)
+        todo = [m for m in todo if m["ticker"] in keep]
+    for m in todo:
+        agg: dict[tuple, list] = defaultdict(lambda: [0.0, 0])
+        # A market that straddles the historical cutoff has trades on both endpoints.
+        for historical in [h for h, use in ((True, m["open_ts"] < cutoff), (False, m["close_ts"] > cutoff)) if use]:
+            async for t in client.trades(historical=historical, ticker=m["ticker"]):
+                if t.get("is_block_trade"):         # negotiated off the book: says nothing about resting bids
+                    continue
+                a = agg[(int(ts(t["created_time"])), t["taker_side"], round(float(t["yes_price_dollars"]), 4))]
+                a[0] += float(t["count_fp"])
+                a[1] += 1
+        with db.tx():
+            for (sec, side, price), (count, n) in agg.items():
+                db.x("INSERT OR REPLACE INTO trades VALUES(?,?,?,?,?,?)", (m["ticker"], sec, side, price, count, n))
+    return len(todo)
 
 
 async def collect_coinbase_spot(db: DB, product: str, index_id: str, start: float, end: float,
@@ -130,6 +165,62 @@ async def collect_coinbase_spot(db: DB, product: str, index_id: str, start: floa
         t = t2
         await asyncio.sleep(0.35)  # stay well under Coinbase public limits
     return n
+
+
+# Pyth symbols from each series' settlement source on Kalshi (2026-10-23). The EUR, JPY, CAD and AUD
+# series link only to pythdata.app, so their symbols follow GBP's pattern and are unverified.
+PYTH_SYMBOLS = {"KXCOPPER15M": "Commodities.Index.CU/USD", "KXPLATINUM15M": "Metal.XPT/USD",
+                "KXPALLADIUM15M": "Metal.XPD/USD", "KXEURUSD15M": "FX.EUR/USD", "KXGBPUSD15M": "FX.GBP/USD",
+                "KXUSDJPY15M": "FX.USD/JPY", "KXUSDCAD15M": "FX.USD/CAD", "KXAUDUSD15M": "FX.AUD/USD",
+                "KXBRENT15M": "Commodities.Index.BRENT/USD", "KX2YRRATE15M": "InterestRate.US2Y",
+                "KX5YRRATE15M": "InterestRate.US5Y", "KX10YRRATE15M": "InterestRate.US10Y",
+                "KX30YRRATE15M": "InterestRate.US30Y"}
+
+
+async def collect_pyth(db: DB, symbol: str, start: float, end: float, api_key: str | None = None,
+                       http: httpx.AsyncClient | None = None) -> int:
+    """Pyth Benchmarks 1-minute bars through its TradingView shim, stored in `spot` as "pyth:<symbol>"
+    at bar start + 60 s, the same convention as Coinbase. Never run against the real API from here
+    (host blocked): `pyth_strike_check` says whether that convention and the symbol are right."""
+    http = http or httpx.AsyncClient(timeout=20)
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    n, t = 0, int(start)
+    while t < end:
+        t2 = int(min(end, t + 86400))
+        for attempt in range(6):
+            r = await http.get("https://benchmarks.pyth.network/v1/shims/tradingview/history", headers=headers,
+                               params={"symbol": symbol, "resolution": "1", "from": t, "to": t2})
+            if r.status_code != 429:
+                break
+            await asyncio.sleep(2 ** attempt)
+        r.raise_for_status()
+        bars = r.json()
+        if bars.get("s") == "ok":
+            with db.tx():
+                for bt, close in zip(bars["t"], bars["c"]):
+                    db.x("INSERT OR IGNORE INTO spot(index_id,ts,value) VALUES(?,?,?)",
+                         (f"pyth:{symbol}", float(bt) + 60, float(close)))
+                    n += 1
+        t = t2
+        await asyncio.sleep(0.2)   # the shim allows 90 requests per 10 s
+    return n
+
+
+def pyth_strike_check(db: DB, series: str) -> dict[str, float | None]:
+    """Each market's floor_strike is the Pyth price at its open, fixed before trading starts, so it checks
+    the stored bars without touching any outcome. Share of markets within 1e-6 relative, per offset."""
+    sym = f"pyth:{PYTH_SYMBOLS[series]}"
+    rows = db.q("SELECT open_ts, floor_strike FROM markets WHERE series=? AND floor_strike IS NOT NULL", (series,))
+    out = {}
+    for off in (0, -60, 60):
+        hit = tot = 0
+        for m in rows:
+            p = db.one("SELECT value FROM spot WHERE index_id=? AND ts=?", (sym, m["open_ts"] + off))
+            if p:
+                tot += 1
+                hit += abs(p["value"] - m["floor_strike"]) <= 1e-6 * abs(m["floor_strike"])
+        out[f"offset {off:+d} s"] = round(hit / tot, 4) if tot else None
+    return out
 
 
 def import_spot_csv(db: DB, path: str, index_id: str) -> int:

@@ -74,6 +74,11 @@ class FakePublic:
         self.last_ok = time.time()
         return self.books[t]
 
+    async def orderbooks(self, tickers):
+        self.calls.append(("orderbooks", tuple(tickers)))
+        self.last_ok = time.time()
+        return {t: self.books[t] for t in tickers if t in self.books}
+
     async def close(self):
         pass
 

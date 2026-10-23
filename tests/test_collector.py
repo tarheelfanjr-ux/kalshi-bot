@@ -72,6 +72,20 @@ async def test_collect_falls_back_to_historical_endpoint_for_old_markets():
     assert (r["yes_bid"], r["yes_ask"], r["volume"]) == (0.4, 0.42, 2.0)
 
 
+async def test_collect_skips_a_recent_market_with_no_candles_anywhere():
+    from kbot.client import KalshiError
+
+    class NoCandles(FakeHistory):
+        async def historical_candlesticks(self, ticker, start, end, period=1):
+            raise KalshiError(404, {"error": {"code": "not_found"}}, "/historical")
+    db = DB(":memory:")
+    fake = NoCandles([api("KXBTC15M-26OCT231000-00", T1, 99.5, 100.0, "yes"),
+                      api("KXBTC15M-26OCT231015-15", T2, 100.0, 99.0, "no")],
+                     {"KXBTC15M-26OCT231015-15": [candle(T2 - 600, 0.6, 0.61)]})
+    assert await collect_history(fake, db, ["KXBTC15M"]) == {"KXBTC15M": 2}
+    assert [r["ticker"] for r in db.q("SELECT DISTINCT ticker FROM candles")] == ["KXBTC15M-26OCT231015-15"]
+
+
 async def test_verify_flags_result_and_timing_problems():
     db = DB(":memory:")
     ms = [api("KXBTC15M-26OCT231000-00", T1, 99.5, 100.0, "yes"),
@@ -97,3 +111,22 @@ def test_candle_batches_respect_kalshi_cap():
         start, end = _batch_window(b)
         assert len(b) * ((end - start) // 60 + 1) <= 10000
     assert len(batches[0]) == 25
+
+
+async def test_pyth_bars_are_stored_at_bar_end_and_checked_against_strikes(tmp_path):
+    import httpx
+    from kbot.collector import collect_pyth, pyth_strike_check
+    seen = []
+
+    def pyth(req):
+        seen.append(req)
+        f = int(req.url.params["from"])
+        return httpx.Response(200, json={"s": "ok", "t": [f, f + 60], "c": [1.16, 1.17]})
+    db = DB(str(tmp_path / "p.sqlite"))
+    async with httpx.AsyncClient(transport=httpx.MockTransport(pyth)) as http:
+        assert await collect_pyth(db, "FX.EUR/USD", T1 - 60, T1 + 60, api_key="k", http=http) == 2
+    assert seen[0].headers["authorization"] == "Bearer k" and seen[0].url.params["resolution"] == "1"
+    assert [r["ts"] for r in db.q("SELECT ts FROM spot WHERE index_id='pyth:FX.EUR/USD' ORDER BY ts")] == [T1, T1 + 60]
+    db.x("INSERT INTO markets(ticker,series,open_ts,close_ts,floor_strike) VALUES('E','KXEURUSD15M',?,?,1.16)",
+         (T1, T1 + 900))
+    assert pyth_strike_check(db, "KXEURUSD15M") == {"offset +0 s": 1.0, "offset -60 s": None, "offset +60 s": 0.0}

@@ -1,0 +1,22 @@
+# Paper trading for the maker strategy. Use with: python -m kbot --config config.maker.toml run
+# Real-money orders are impossible here: the maker strategy refuses any mode but paper.
+mode = "paper"
+data_env = "production"     # live production market data, read without a key
+db_path = "data/paper-maker.sqlite"
+series = ["KXBTC15M", "KXETH15M", "KXSOL15M", "KXXRP15M"]
+max_data_age_s = 10.0
+max_clock_skew_s = 2.0
+loop_interval_s = 2.0
+notify_webhook = ""
+
+[risk]
+bankroll = 25.0             # the real limits. Every quote is still logged at 1 contract for research.
+max_position_risk_pct = 0.01
+max_open_risk_pct = 0.05
+max_daily_loss_pct = 0.02
+max_consecutive_losses = 5
+max_open_positions = 3
+max_market_inventory = 1
+
+[strategy]
+name = "maker"              # fair_value runs beside it as a shadow benchmark, never traded
