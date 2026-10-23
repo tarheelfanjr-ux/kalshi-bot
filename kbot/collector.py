@@ -180,6 +180,11 @@ _MONTHS = {m: i for i, m in enumerate(
     ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"], 1)}
 
 
+def _exp_value(d: dict) -> float | None:
+    # A few settled markets report it with thousands separators, e.g. "79,604.96".
+    return num((d.get("expiration_value") or "").replace(",", ""))
+
+
 def verify_history(db: DB, series: list[str] | None = None) -> dict:
     """Audit stored history: window timing, ticker time vs close time (US Eastern),
     official result vs expiration_value and strike, strike continuity, gaps, and quotes."""
@@ -214,11 +219,11 @@ def verify_history(db: DB, series: list[str] | None = None) -> dict:
                     problems.append(f"{m['ticker']} ticker time != close_time")
             else:
                 c["ticker_time_unparsed"] += 1
-            ev, k = num(d.get("expiration_value")), m["floor_strike"]
+            ev, k = _exp_value(d), m["floor_strike"]
             if k is None and d.get("strike_type") is None and prev is not None \
                     and m["close_ts"] - prev["close_ts"] == 900:
                 # Strike shown as TBD; the rules define it as the previous window's 60 s average.
-                k = num(json.loads(prev["data"] or "{}").get("expiration_value"))
+                k = _exp_value(json.loads(prev["data"] or "{}"))
                 d["strike_type"] = "greater_or_equal"
                 c["strike_taken_from_prev_expiration"] += 1
             if ev is None or k is None or d.get("strike_type") != "greater_or_equal":
@@ -237,7 +242,7 @@ def verify_history(db: DB, series: list[str] | None = None) -> dict:
                     c["missing_windows"] += int(gap // 900) - 1
                 elif m["close_ts"] == prev["close_ts"]:
                     c["duplicate_close_time"] += 1
-                pev = num(json.loads(prev["data"] or "{}").get("expiration_value"))
+                pev = _exp_value(json.loads(prev["data"] or "{}"))
                 if gap == 900 and pev is not None and m["floor_strike"] is not None:
                     c["strike_eq_prev_expiration" if abs(pev - m["floor_strike"]) < 1e-9 else "strike_ne_prev_expiration"] += 1
             prev = m

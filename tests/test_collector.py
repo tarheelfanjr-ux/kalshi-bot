@@ -77,6 +77,7 @@ async def test_verify_flags_result_and_timing_problems():
     ms = [api("KXBTC15M-26OCT231000-00", T1, 99.5, 100.0, "yes"),
           api("KXBTC15M-26OCT231015-15", T2, 100.0, 101.0, "no"),        # wrong: 101 >= 100 should be yes
           api("KXBTC15M-26OCT231100-00", T2 + 2700, 101.0, 100.0, "no")]  # ticker 11:00 ET, so 2 windows missing
+    ms[2].update(expiration_value="1,000.0", result="yes")    # thousands separator seen in real data
     fake = FakeHistory(ms, {})
     await collect_history(fake, db, ["KXBTC15M"])
     c = verify_history(db)["KXBTC15M"]["checks"]
