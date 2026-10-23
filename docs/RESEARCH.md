@@ -4,12 +4,12 @@ Everything here was read from official Kalshi documentation on 2026-10-23 unless
 "third party". The bot re-reads fee settings, rules, and strikes from the live API at
 runtime, so these notes are a starting point, not hardcoded truth.
 
-## Environment limitation
+## Environment notes
 
-The cloud container this was built in blocks all Kalshi hosts and crypto price feeds
-(HTTP 403 from the egress proxy). Docs were read through a separate web fetcher.
-No market data was downloaded, so **no backtest numbers exist yet**. See
-`docs/REPORT.md` for what this means.
+The first build environment blocked all Kalshi hosts. Since 2026-10-23 the project environment
+reaches Kalshi REST, historical data, and Coinbase Exchange. The WebSocket returns 401 without a key,
+and other spot sources (Kraken, Binance, CF Benchmarks) are still blocked. Unauthenticated Kalshi reads
+are throttled near 3.5 req/s. Backtest results are in `docs/REPORT.md`.
 
 ## API facts
 
