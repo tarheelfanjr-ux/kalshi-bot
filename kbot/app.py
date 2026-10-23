@@ -120,6 +120,12 @@ class App:
 
     async def shutdown(self, tasks) -> None:
         log.info("shutting down")
+        if self.maker:      # resting bids must not outlive the process that manages them
+            try:
+                await self.om.cancel_open_entries("shutdown")
+            except Exception as e:
+                log.error("cancel on shutdown failed: %s. Check open orders on Kalshi.", e)
+                self.notify(f"could not cancel resting orders on shutdown: {e!r}"[:300])
         if self.ws:
             self.ws.stop()
         for t in tasks:

@@ -7,9 +7,9 @@ Rules this module enforces:
   looks it up by client_order_id first.
 * An accepted order is not a filled order. Fills come from the exchange response or
   the reconciliation query, never from assumption.
-* Live entries are immediate-or-cancel taker orders, so nothing rests on the book by
-  accident. Resting post-only bids exist only in paper mode (the maker strategy), where
-  they fill only when the public trade tape shows they were hit.
+* Entries are immediate-or-cancel taker orders, except the maker strategy's post-only bids.
+  Those rest on purpose, expire at market close, and are cancelled when their quote ends
+  or the bot shuts down. In paper mode they fill only when the public tape shows a hit.
 """
 from __future__ import annotations
 
@@ -56,7 +56,8 @@ class ExchangeOrder:
 class Adapter(Protocol):
     mode: str
 
-    async def submit(self, *, ticker, outcome_side, limit_price, count, client_order_id) -> ExchangeOrder: ...
+    async def submit(self, *, ticker, outcome_side, limit_price, count, client_order_id,
+                     post_only=False, expiration_ts=None) -> ExchangeOrder: ...
     async def cancel(self, ticker, exchange_order_id) -> None: ...
     async def lookup(self, ticker, client_order_id, exchange_order_id) -> ExchangeOrder | None: ...
     async def positions(self) -> dict[str, float] | None: ...
@@ -77,7 +78,8 @@ class PaperAdapter:
         self.get_book, self.fill_fraction, self.max_age = get_book, fill_fraction, max_book_age_s
         self.orders: dict[str, ExchangeOrder] = {}
 
-    async def submit(self, *, ticker, outcome_side, limit_price, count, client_order_id, post_only=False):
+    async def submit(self, *, ticker, outcome_side, limit_price, count, client_order_id, post_only=False,
+                     expiration_ts=None):
         book = self.get_book(ticker)
         if book is None or book.age() > self.max_age:
             eo = ExchangeOrder(None, "rejected", 0, count, None, 0)
@@ -154,14 +156,25 @@ class KalshiAdapter:
                 avg = yes_avg if outcome_side == "yes" else 1 - yes_avg
             if not fees and o.get("average_fee_paid"):
                 fees = float(o["average_fee_paid"]) * filled
+        maker = float(o.get("maker_fill_cost_dollars") or 0) > 0 and not float(o.get("taker_fill_cost_dollars") or 0)
+        if maker:
+            avg = None      # a resting order fills at its own limit price, whichever leg the cost is quoted on
         status = o.get("status") or ("executed" if remaining == 0 and filled else "resting" if remaining else "canceled")
-        return ExchangeOrder(o.get("order_id"), status, filled, remaining, avg, fees)
+        return ExchangeOrder(o.get("order_id"), status, filled, remaining, avg, fees, maker=maker)
 
-    async def submit(self, *, ticker, outcome_side, limit_price, count, client_order_id):
+    async def submit(self, *, ticker, outcome_side, limit_price, count, client_order_id, post_only=False,
+                     expiration_ts=None):
         book_side, price = self._to_book(outcome_side, limit_price)
+        kw = {}
+        if post_only:      # rests on the book; the exchange rejects it if it would trade on arrival
+            kw = {"time_in_force": "good_till_canceled", "post_only": True}
+            if expiration_ts:
+                kw["expiration_time"] = int(expiration_ts)
         r = await self.client.create_order(ticker=ticker, book_side=book_side, price=price, count=count,
-                                           client_order_id=client_order_id)
+                                           client_order_id=client_order_id, **kw)
         eo = self._from_api(r, outcome_side)
+        if post_only:
+            return eo
         if eo.status == "resting" and eo.remaining == 0:
             eo.status = "executed"
         # IOC: anything not filled was cancelled by the exchange.
@@ -251,7 +264,8 @@ class OrderManager:
 
     # --- public API ---------------------------------------------------------
     async def place(self, *, ticker: str, outcome_side: str, limit_price: float, count: float,
-                    signal_id: int | None = None, purpose: str = "entry", post_only: bool = False) -> str:
+                    signal_id: int | None = None, purpose: str = "entry", post_only: bool = False,
+                    expiration_ts: float | None = None) -> str:
         coid = str(uuid.uuid4())
         self.db.x("INSERT INTO orders(client_order_id,mode,ticker,outcome_side,limit_price,count,state,purpose,"
                   "signal_id,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending_submit',?,?,?,?)",
@@ -261,7 +275,7 @@ class OrderManager:
         try:
             eo = await self.adapter.submit(ticker=ticker, outcome_side=outcome_side, limit_price=limit_price,
                                            count=count, client_order_id=coid,
-                                           **({"post_only": True} if post_only else {}))
+                                           **({"post_only": True, "expiration_ts": expiration_ts} if post_only else {}))
         except OrderStateUnknown as e:
             self._set_state(coid, "unknown", last_error=str(e)[:500])
             self.notify(f"order {coid} state unknown after timeout; will reconcile, not resend")
@@ -309,6 +323,16 @@ class OrderManager:
             if abs(local.get(t, 0) - remote.get(t, 0)) > 1e-6:
                 problems.append(f"{t}: local {local.get(t, 0)} vs exchange {remote.get(t, 0)}")
         return problems
+
+    async def cancel(self, client_order_id: str) -> None:
+        """Cancel one order on the exchange and record what it says the order ended as."""
+        o = self.db.one("SELECT ticker, exchange_order_id FROM orders WHERE client_order_id=?", (client_order_id,))
+        if o and o["exchange_order_id"]:
+            await self.adapter.cancel(o["ticker"], o["exchange_order_id"])
+            self.db.event("order_cancel", self.mode, o["ticker"], coid=client_order_id)
+            # Read it back at once: a fill that beat the cancel must count before the next order.
+            if (eo := await self.adapter.lookup(o["ticker"], client_order_id, o["exchange_order_id"])):
+                self._apply(client_order_id, eo)
 
     async def cancel_open_entries(self, reason: str) -> int:
         n = 0

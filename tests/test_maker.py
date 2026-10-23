@@ -70,7 +70,7 @@ async def test_maker_quotes_fill_only_on_trade_through_and_settle(tmp_path):
     await app.maker.poll_trades()
     await app.om.reconcile_orders()
     q = {r["side"]: r for r in app.db.q("SELECT * FROM quotes")}
-    assert (q["yes"]["status"], q["yes"]["fill_ts"], q["no"]["status"]) == ("filled", pytest.approx(t0 + 4), "filled")
+    assert (q["yes"]["status"], q["yes"]["fill_ts"], q["no"]["status"]) == ("filled", pytest.approx(t0 + 4, abs=1e-6), "filled")
     pos = app.db.q("SELECT * FROM positions")
     assert [(p["outcome_side"], p["count"], p["cost"], p["fees"]) for p in pos] == [("yes", 1.0, 0.20, 0.0)]
     assert app.db.one("SELECT is_taker FROM fills")["is_taker"] == 0

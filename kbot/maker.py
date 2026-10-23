@@ -25,7 +25,7 @@ from .execution import OrderManager, PaperAdapter
 from .experiments import SERIES, SPECS, e2_report, summary
 from .fees import MAKER_RATE, TAKER_RATE, fee
 from .reports import performance
-from .risk import RiskManager
+from .risk import OPEN_ORDER_STATES, RiskManager
 
 log = logging.getLogger(__name__)
 
@@ -69,30 +69,39 @@ async def history(client: PublicClient | None, db: DB, per_series: dict[str, int
 SHADOW_REASON = "shadow: fair_value benchmark, not traded"
 PAPER_LABEL = ("SHORT PROSPECTIVE PAPER TEST (live Kalshi data, simulated fills, no orders sent). "
                "Not E2's frozen evaluation. A small sample cannot show an edge: read the CI, not the mean.")
+LIVE_LABEL = ("SHORT PROSPECTIVE TEST WITH REAL ORDERS ON {mode} (account fills come from the exchange). "
+              "Not E2's frozen evaluation. A small sample cannot show an edge: read the CI, not the mean.")
 
 
 class MakerEngine:
-    """E2's quoting rule, live, in paper mode.
+    """E2's quoting rule, live.
 
     Every quote the rule wants goes in `quotes`, the 1-contract research log, whether or not the
-    risk manager lets the paper account place it. Both get fills from the same public trade tape
-    by the same trade-through rule, so the log measures the rule and the account shows what the
-    risk limits allow.
+    risk manager lets the account place an order for it. The log always gets its fills from the
+    public trade tape by the trade-through rule.
+
+    Paper mode: the paper order fills when its quote does, and is cancelled once the tape has been
+    read past the quote's end. Demo and production: the order is a real post-only bid. Its fills
+    come only from the exchange (reconciliation), and it is cancelled the moment its quote ends.
+    Comparing the two on the same quotes checks the paper fill model.
     """
     API_LAG_S = 5.0          # a trade can reach /markets/trades a few seconds after it prints
     TRADES_EVERY_S = 4.0
     OVERLAP_S = 15.0         # each trade poll re-reads this much; trade ids remove duplicates
 
     def __init__(self, db: DB, discovery: Discovery, om: OrderManager, risk: RiskManager,
-                 books: dict[str, OrderBook], adapter: PaperAdapter):
+                 books: dict[str, OrderBook], adapter):
         self.db, self.discovery, self.om, self.risk, self.books, self.adapter = db, discovery, om, risk, books, adapter
         self.mode = om.mode
+        self.paper = isinstance(adapter, PaperAdapter)
         self.spec = SPECS["E2"]
         self._minute: dict[str, int] = {}
         self._cursor: dict[str, float] = {}
         self._polled: dict[str, float] = {}
         self._seen: dict[str, dict[str, float]] = {}
         self._timers: dict[str, float] = {}
+        if not self.paper:
+            return              # real orders live on the exchange; reconciliation restores them
         # Paper orders live only in memory: after a restart, keep the ones whose quote is still open.
         live = {r["client_order_id"] for r in db.q("SELECT client_order_id FROM quotes WHERE mode=? AND status='open' "
                                                    "AND client_order_id IS NOT NULL", (self.mode,))}
@@ -110,12 +119,15 @@ class MakerEngine:
         if self._every("trades", self.TRADES_EVERY_S, now):
             await self.poll_trades()
         await self.expire()
-        await self.om.reconcile_orders()            # paper orders follow their quotes
+        if self.paper or self._every("orders", 5, now):     # paper orders follow their quotes; real ones cost API calls
+            await self.om.reconcile_orders()
         minute = int(now // 60)
         for m in markets.values():
             if self._minute.get(m.ticker) != minute:
                 self._minute[m.ticker] = minute
                 await self.quote(m, now, healthy, health_reason)
+        if not self.paper:
+            await self.cancel_ended(now)
         if self._every("results", 60, now):
             await self.fetch_results(now)
 
@@ -130,14 +142,32 @@ class MakerEngine:
                   "VALUES(?,?,'maker',?,?,?,?,?,?,?)",
                   (time.time(), self.mode, ticker, side, price, market_q, count, int(accepted), reason))
 
-    async def _place(self, ticker, side, price, healthy, health_reason) -> tuple[str | None, str]:
-        d = self.risk.approve_quote(ticker, side, price, 1, self._fee(ticker, price), healthy=healthy,
+    def _order_live(self, coid: str | None) -> bool:
+        r = coid and self.db.one("SELECT state FROM orders WHERE client_order_id=?", (coid,))
+        return bool(r) and r["state"] in OPEN_ORDER_STATES
+
+    async def _clear_side(self, ticker: str, side: str) -> bool:
+        """Real orders: cancel any order still working on this side. True once none is left."""
+        open_ = f"mode=? AND ticker=? AND outcome_side=? AND state IN ({','.join('?' * len(OPEN_ORDER_STATES))})"
+        for o in self.db.q(f"SELECT client_order_id FROM orders WHERE {open_}", (self.mode, ticker, side, *OPEN_ORDER_STATES)):
+            try:
+                await self.om.cancel(o["client_order_id"])
+            except Exception as e:
+                log.error("cancel %s failed: %s", o["client_order_id"], e)
+        return not self.db.one(f"SELECT 1 FROM orders WHERE {open_}", (self.mode, ticker, side, *OPEN_ORDER_STATES))
+
+    async def _place(self, m: MarketInfo, side, price, healthy, health_reason) -> tuple[str | None, str]:
+        # Two working bids on one side could both fill. A fill found here counts in the inventory check below.
+        if not self.paper and not await self._clear_side(m.ticker, side):
+            return None, "previous order on this side still working"
+        d = self.risk.approve_quote(m.ticker, side, price, 1, self._fee(m.ticker, price), healthy=healthy,
                                     health_reason=health_reason)
         if not d.approved:
             return None, d.reason
-        coid = await self.om.place(ticker=ticker, outcome_side=side, limit_price=price, count=d.count, post_only=True)
+        coid = await self.om.place(ticker=m.ticker, outcome_side=side, limit_price=price, count=d.count,
+                                   post_only=True, expiration_ts=m.close_ts)
         state = self.db.one("SELECT state FROM orders WHERE client_order_id=?", (coid,))["state"]
-        return (coid, d.reason) if state == "resting" else (None, f"paper order {state}")
+        return (coid, d.reason) if state == "resting" else (None, f"{self.mode} order {state}")
 
     async def quote(self, m: MarketInfo, now: float, healthy: bool, health_reason: str) -> None:
         sp = self.spec
@@ -162,10 +192,10 @@ class MakerEngine:
             cur = self.db.one("SELECT * FROM quotes WHERE mode=? AND ticker=? AND side=? AND status='open' AND end_ts>? "
                               "ORDER BY quote_ts DESC LIMIT 1", (self.mode, m.ticker, side, now))
             if cur and abs(cur["price"] - price) < 1e-9:
-                # Same price: keep resting and keep our place. Retry the paper order if it had none.
+                # Same price: keep resting and keep our place. Place an order if it has none working.
                 self.db.x("UPDATE quotes SET end_ts=? WHERE id=?", (end, cur["id"]))
-                if not cur["client_order_id"]:
-                    coid, why = await self._place(m.ticker, side, price, healthy, health_reason)
+                if not self._order_live(cur["client_order_id"]):
+                    coid, why = await self._place(m, side, price, healthy, health_reason)
                     self.db.x("UPDATE quotes SET client_order_id=?, risk=? WHERE id=?", (coid, why, cur["id"]))
                     if coid:
                         self._log(m.ticker, why, side, price, mq, True, 1)
@@ -175,7 +205,7 @@ class MakerEngine:
             if not lo <= price <= hi:
                 self._log(m.ticker, f"skip: bid {price:.2f} outside {lo:.2f}-{hi:.2f}", side, price, mq)
                 continue
-            coid, why = await self._place(m.ticker, side, price, healthy, health_reason)
+            coid, why = await self._place(m, side, price, healthy, health_reason)
             self.db.x("INSERT INTO quotes(mode,ticker,side,price,quote_ts,end_ts,yes_bid,yes_ask,queue,seconds_left,"
                       "client_order_id,risk) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                       (self.mode, m.ticker, side, price, now, end, yb[0], ya[0], queue, m.close_ts - now, coid, why))
@@ -224,7 +254,7 @@ class MakerEngine:
                           (t, ours, q["id"]))
                 self.db.x("UPDATE quotes SET end_ts=MIN(end_ts, ?) WHERE mode=? AND ticker=? AND side=? AND status='open'",
                           (t, self.mode, ticker, q["side"]))
-            if q["client_order_id"]:
+            if q["client_order_id"] and self.paper:
                 self.adapter.fill(q["client_order_id"], q["price"], self._fee(ticker, q["price"]))
 
     async def expire(self) -> None:
@@ -234,8 +264,18 @@ class MakerEngine:
                            "WHERE q.mode=? AND q.status='open'", (self.mode,)):
             if self._polled.get(q["ticker"], 0) - self.API_LAG_S >= q["end_ts"]:
                 self.db.x("UPDATE quotes SET status='expired' WHERE id=?", (q["id"],))
-                if q["exchange_order_id"]:
+                if q["exchange_order_id"] and self.paper:
                     await self.adapter.cancel(q["ticker"], q["exchange_order_id"])
+
+    async def cancel_ended(self, now: float) -> None:
+        """Real orders: cancel at once when their quote has ended, filled on the tape or not."""
+        for q in self.db.q(f"SELECT q.client_order_id FROM quotes q JOIN orders o ON o.client_order_id=q.client_order_id "
+                           f"WHERE q.mode=? AND q.end_ts<=? AND o.state IN ({','.join('?' * len(OPEN_ORDER_STATES))})",
+                           (self.mode, now, *OPEN_ORDER_STATES)):
+            try:
+                await self.om.cancel(q["client_order_id"])
+            except Exception as e:      # reconciliation and the next tick retry
+                log.error("cancel %s failed: %s", q["client_order_id"], e)
 
     async def fetch_results(self, now: float) -> None:
         """Outcomes for markets that only the research log or the fair_value shadow touched."""
@@ -295,8 +335,14 @@ def report(db: DB, mode: str = "paper", bankroll: float = 25.0) -> dict:
         k = re.sub(r"\$?\d+(\.\d+)?", "#", r["reason"] or "")
         skips[k] = skips.get(k, 0) + 1
     t0 = db.one("SELECT MIN(quote_ts) t FROM quotes WHERE mode=?", (mode,))["t"]
+    # Real orders only: did the exchange fill the bids the tape rule says were filled? Paper fills are the tape's.
+    check = {"tape_and_exchange": 0, "tape_only": 0, "exchange_only": 0, "neither": 0}
+    for r in db.q("SELECT q.status, o.filled FROM quotes q JOIN orders o ON o.client_order_id=q.client_order_id "
+                  "WHERE q.mode=? AND q.status<>'open' AND o.state IN ('filled','canceled')", (mode,)):
+        tape, ex = r["status"] == "filled", (r["filled"] or 0) > 0
+        check["tape_and_exchange" if tape and ex else "tape_only" if tape else "exchange_only" if ex else "neither"] += 1
     return {
-        "label": PAPER_LABEL,
+        "label": PAPER_LABEL if mode == "paper" else LIVE_LABEL.format(mode=mode.upper()),
         "since_utc": datetime.fromtimestamp(t0, timezone.utc).strftime("%Y-%m-%d %H:%M") if t0 else None,
         "maker_research_log": {
             "what": "every quote the rule posted, 1 contract each, no risk limits",
@@ -320,6 +366,7 @@ def report(db: DB, mode: str = "paper", bankroll: float = 25.0) -> dict:
             "net_per_contract": summary(fv, "net")},
         "no_trade_baseline": {"net_pnl": 0.0},
         "skips_24h": dict(sorted(skips.items(), key=lambda kv: -kv[1])[:8]),
+        **({} if mode == "paper" else {"fill_model_check": check}),
     }
 
 
@@ -350,4 +397,7 @@ def format_report(rep: dict) -> str:
              f"  net per contract   {ci(fv['net_per_contract'])}",
              "No-trade baseline: net 0.00", "", "Skipped quotes, last 24 h:"]
     lines += [f"  {n:6d}  {k}" for k, n in rep["skips_24h"].items()] or ["  none"]
+    if (c := rep.get("fill_model_check")):
+        lines += ["", "Fill model check, closed quotes with a real order (tape rule vs exchange): "
+                  + ", ".join(f"{k.replace('_', ' ')} {n}" for k, n in c.items())]
     return "\n".join(lines)

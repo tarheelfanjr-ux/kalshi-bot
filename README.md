@@ -11,7 +11,7 @@ profitable. A 90-day real-data backtest (2026-10-23) found no edge. See [docs/RE
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 cp config.example.toml config.toml
-.venv/bin/pytest                         # 96 tests, no network needed
+.venv/bin/pytest                         # 104 tests, no network needed
 .venv/bin/python -m kbot discover        # list live 15-minute series and markets
 .venv/bin/python -m kbot collect --days 60          # settled markets + minute candles
 .venv/bin/python -m kbot verify-data                # audit settlement, timing, gaps
