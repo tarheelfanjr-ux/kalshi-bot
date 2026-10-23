@@ -1,0 +1,29 @@
+# Copy to config.toml. Secrets never go in this file: see docs/OPERATING_MANUAL.md.
+mode = "paper"              # paper | demo | production (production also needs arming, see docs/LIVE_CHECKLIST.md)
+data_env = "production"     # where market data comes from in paper mode. demo mode forces "demo".
+db_path = "data/kbot.sqlite"
+series = []                 # empty = auto-discover every series ending in 15M; e.g. ["KXBTC15M", "KXETH15M"]
+max_data_age_s = 10.0
+max_clock_skew_s = 2.0
+loop_interval_s = 2.0
+dashboard_host = "127.0.0.1"
+dashboard_port = 8765
+notify_webhook = ""         # optional, e.g. "https://ntfy.sh/your-private-topic"
+
+[risk]
+bankroll = 25.0             # designated trading bankroll in dollars
+max_position_risk_pct = 0.01
+max_open_risk_pct = 0.05
+max_daily_loss_pct = 0.02
+max_consecutive_losses = 5
+max_open_positions = 3
+
+[strategy]
+name = "fair_value"         # fair_value | momentum | mean_reversion | market_implied | no_trade
+min_net_edge = 0.03         # dollars per contract after fees and the uncertainty buffer
+min_seconds_left = 90
+max_seconds_left = 840
+max_spread = 0.06
+min_top_size = 5.0
+vol_lookback_s = 900
+model_uncertainty = 0.02
