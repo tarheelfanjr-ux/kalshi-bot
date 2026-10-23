@@ -11,12 +11,13 @@ profitable. A 90-day real-data backtest (2026-10-23) found no edge. See [docs/RE
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 cp config.example.toml config.toml
-.venv/bin/pytest                         # 75 tests, no network needed
+.venv/bin/pytest                         # 78 tests, no network needed
 .venv/bin/python -m kbot discover        # list live 15-minute series and markets
 .venv/bin/python -m kbot collect --days 60          # settled markets + minute candles
 .venv/bin/python -m kbot verify-data                # audit settlement, timing, gaps
 .venv/bin/python -m kbot collect-spot --days 60     # Coinbase 1-min prices (index proxy)
 .venv/bin/python -m kbot research        # strategy comparison -> reports/research-latest.json
+.venv/bin/python -m kbot audit           # why the strategy loses -> reports/edge-audit.json
 .venv/bin/python -m kbot run             # continuous paper trading (default mode)
 .venv/bin/python -m kbot dashboard       # http://127.0.0.1:8765
 ```
