@@ -44,6 +44,7 @@ market data. Without it, paper mode polls books over REST and uses Coinbase as t
 ```bash
 kbot discover                    # confirm which 15M series exist right now, fee type, sources
 kbot collect --days 60           # settled markets + 1-minute candles (resumable, ~1 hour per 90 days x 4 series)
+kbot collect --days 60 --trades  # the same, plus every public trade in those markets
 kbot verify-data                 # settlement rule, ticker times, gaps, quotes -> reports/data-verification.json
 kbot collect-spot --days 60      # Coinbase 1-minute prices, stored as proxy for each RTI index
 kbot import-spot file.csv --index BRTI   # optional: real index data you are licensed to use
@@ -72,8 +73,10 @@ kbot experiment evaluate E1 --final     # once, after D0 + 56 days
 E1 needs the read-only production key above, set on the machine that runs `kbot record`. Without
 it E1 shows "not started" and everything else still records. Run the recorder on a machine that
 stays on (sleep off), or as a service like the one in section 4 with `ExecStart=... -m kbot record`.
-A one-hour test wrote about 3 MB, so plan on roughly 100 MB a day. E2's primary test needs only
-`kbot backfill`, which can run any time later.
+A one-hour test with the four crypto series wrote about 3 MB. The recorder now also records 13
+candidate series (copper, platinum, palladium, five FX pairs, Brent and four Treasury yields), so
+plan on roughly 100 to 200 MB a day. That figure is an estimate: check the file size after a day.
+E2's primary test needs only `kbot backfill`, which can run any time later.
 
 ## 4. Continuous paper trading
 

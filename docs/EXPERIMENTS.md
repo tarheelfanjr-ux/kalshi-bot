@@ -31,3 +31,15 @@ Running it: see [OPERATING_MANUAL.md](OPERATING_MANUAL.md#prospective-experiment
 
 The maker paper bot (`config.maker.toml`) runs E2's rule live as a short, labelled paper test. It
 shares E2's data from Oct 24 on but not its verdict: E2 is still read once, by its frozen rule.
+
+## Candidate series: recorded, not frozen
+
+From 2026-10-23 the recorder also records books, settled markets, candles, trades and fee state for
+13 more 15M series: KXCOPPER15M, KXPLATINUM15M, KXPALLADIUM15M, KXEURUSD15M, KXGBPUSD15M,
+KXUSDJPY15M, KXUSDCAD15M, KXAUDUSD15M, KXBRENT15M and KX2YRRATE15M, KX5YRRATE15M, KX10YRRATE15M,
+KX30YRRATE15M (`CANDIDATE_SERIES` in `kbot/recorder.py`). E1 and E2 never read them.
+
+No experiment on these series is frozen yet. Candidate ideas are in the
+[thin-series scan](https://claude.ai/artifact/FBUQNh3X2giTnj1QME4UVa). For any past-data test, only
+the earliest 50% of each series' settled markets (as of 2026-10-23) has been read, and only for its
+tie rate. The later half and every mid-against-outcome comparison stay unread until a spec is frozen.
