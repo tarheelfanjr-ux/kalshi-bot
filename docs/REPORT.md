@@ -1,23 +1,41 @@
-# Status report (2026-10-23)
+# Status report (updated 2026-10-23, real-data backtest)
 
 ## Bottom line
 
-The full system is built and its automated tests pass (71 of 71, against a mocked exchange).
-**No strategy has been tested on real data, so there is no evidence of an edge yet.** The
-cloud machine it was built on blocks every Kalshi host and every crypto price feed, so no
-market history could be downloaded. Nothing below is a performance result. Production trading
-is disabled.
+**A 90-day backtest on real Kalshi data found no profitable strategy. Do not paper or live trade
+momentum or mean reversion.** fair_value is still untested because this environment blocks every
+spot price feed. Production trading is disabled and no orders were sent.
 
-The next step is to run `kbot collect`, `kbot collect-spot`, and `kbot research` from a machine
-that can reach Kalshi. The research verdict decides whether anything moves to paper trading.
+All numbers below are HISTORICAL BACKTEST (simulated fills on Kalshi minute candles).
+
+* Data: 34,128 settled markets (KXBTC15M, KXETH15M, KXSOL15M, KXXRP15M), 2026-07-25 14:30 to
+  2026-10-23 14:30 UTC, 477,435 minute decision points. 34,123 results match the settlement rule,
+  0 mismatches, 5 not checkable. Only gaps are 13 Thursday maintenance windows. 24 markets had no candles.
+* Split by time: train Jul 25 to Sep 17 (20,462 markets), validation Sep 17 to Oct 5 (6,821),
+  holdout Oct 5 to Oct 23 (6,821). Holdout opened once per run below.
+
+| Run | Strategy | Train | Validation | Holdout |
+|---|---|---|---|---|
+| $25 bankroll (configured) | mean_reversion | 386 trades, -$13.26, max DD $19.75 | 170 trades, -$1.80, CI/trade [-0.063, +0.045] | 135 trades, -$0.68, CI/trade [-0.080, +0.090] |
+| $25 bankroll (configured) | momentum | 6 trades, -$0.44 | 2 trades, -$0.50 | 8 trades, +$0.05 |
+| $1,000 diagnostic | momentum | 5,284 trades, -$788.85 | 1,922 trades, -$238.15, CI/trade [-0.240, -0.008] | 1,718 trades, -$255.06, CI/trade [-0.281, -0.024] |
+| $1,000 diagnostic | mean_reversion | 769 trades, -$129.40 | 269 trades, -$41.82 | 268 trades, -$36.99 |
+
+fair_value, market_implied, and no_trade made 0 trades in every period (fair_value: no spot data;
+market_implied: correct, costs leave no free edge). Full reports: `reports/research-A-configured.json`,
+`reports/research-B-diagnostic.json`, `reports/data-verification-90d.json`.
+
+Remaining restrictions: WebSocket returns 401 without an API key. Coinbase and every other spot
+source are blocked by the environment's network policy. Unauthenticated Kalshi reads are throttled
+near 3.5 req/s.
 
 ## Phase reports
 
 | Phase | Implemented | Tested | Passed | Failed / incomplete |
 |---|---|---|---|---|
-| Research | Official docs read for auth, endpoints, V2 orders, books, fees, rate limits, lifecycle, historical split, WebSocket channels | n/a | n/a | Could not call the API. The list of 15M series is from a third-party site and must be confirmed with `kbot discover`. |
-| 1. Quant research | Calibration of market mid vs outcome, strategy comparison, random-direction baseline, sensitivity, cluster bootstrap CIs, holdout control, pass/fail verdict | End-to-end on hand-made test input | Yes | **No real data: no research results exist.** |
-| 2. Discovery | 15M series scan, window check, eligibility, lifecycle events, REST + WS, rate limiter, reconnect | Unit + app tests | Yes | Live API untested. |
+| Research | Official docs read for auth, endpoints, V2 orders, books, fees, rate limits, lifecycle, historical split, WebSocket channels | n/a | n/a | API reachable since 2026-10-23. `kbot discover` found 29 live 15M series. |
+| 1. Quant research | Calibration of market mid vs outcome, strategy comparison, random-direction baseline, sensitivity, cluster bootstrap CIs, holdout control, pass/fail verdict | End-to-end on hand-made test input | Yes | Run on 90 days of real data 2026-10-23. No strategy passed. |
+| 2. Discovery | 15M series scan, window check, eligibility, lifecycle events, REST + WS, rate limiter, reconnect | Unit + app tests | Yes | Live discover works (2026-10-23). WebSocket untested (needs key). |
 | 3. Signals | `Candidate` with all requested fields, YES/NO executable prices, fees, uncertainty, invalidation, 4 strategies + no-trade | Unit tests | Yes | Fair-value model ignores drift, jumps, fat tails. |
 | 4. Backtest | Event-driven replay through real risk and execution code; fees, slippage, partial and missed fills, capital, limits, settlement; metrics incl. Sharpe, drawdown, streaks, fee burden, by series and volatility regime | Hand-checked P&L, no-lookahead spy, stress, daily-loss trip | Yes | Kalshi candles have no depth, so size per order is capped by assumption. No historical book reconstruction. |
 | 5. Paper | Live data, simulated IOC fills at 50% of displayed size, fees, positions, settlement, P&L, persistence, labelled results | App tests incl. restart | Yes | Not run against live data. |
@@ -31,7 +49,7 @@ that can reach Kalshi. The research verdict decides whether anything moves to pa
 
 | Category | Status |
 |---|---|
-| Historical backtest | **Not run on real data.** Blocked by network. |
+| Historical backtest | Run on 90 days of real data (2026-10-23). No strategy passed. See bottom line. |
 | Paper trading | **Not run.** Blocked by network. |
 | Kalshi demo account | **Not run.** Needs your demo key and network. |
 | Production | Disabled. Never run. |
@@ -66,8 +84,8 @@ that can reach Kalshi. The research verdict decides whether anything moves to pa
 
 ## Limitations
 
-1. No real data was collected or tested (network policy). All acceptance criteria that need the
-   live API (2, 3 live, 4 live, 10 live, 12 live) are verified only against mocks.
+1. Real market data is reachable now, but spot prices, the WebSocket, and account endpoints are not.
+   Acceptance criteria that need them (3 live, 4 live, 10 live, 12 live) are verified only against mocks.
 2. Kalshi's historical candles have top-of-book only. Depth, queue position, and latency are
    assumptions. The bot records live book snapshots every 10 s so future backtests can use real depth.
 3. The CF Benchmarks history endpoint needs an entitlement. Coinbase prices are a proxy for the
@@ -83,13 +101,13 @@ that can reach Kalshi. The research verdict decides whether anything moves to pa
 | # | Criterion | Status |
 |---|---|---|
 | 1 | Starts from documented command | Met (`kbot run`, smoke tested) |
-| 2 | Connects to intended environment | **Not verified** (network blocked); code and URLs per docs |
+| 2 | Connects to intended environment | Met for public REST and historical data (2026-10-23). WebSocket needs a key |
 | 3 | Discovers eligible markets | Met on mocks; live unverified |
 | 4 | Fresh market data | Met on mocks |
 | 5 | Evaluates candidates | Met |
 | 6 | Net profitability after costs | Met |
 | 7 | Records why it trades or not | Met |
-| 8 | Historical backtesting | Met (code); **no real-data run** |
+| 8 | Historical backtesting | Met. Real-data run 2026-10-23: no strategy passed |
 | 9 | Persistent paper trading | Met on mocks |
 | 10 | Survives network interruptions | Met on mocks |
 | 11 | Restores state after restart | Met |
@@ -100,11 +118,12 @@ that can reach Kalshi. The research verdict decides whether anything moves to pa
 | 16 | Credentials stored securely | Met |
 | 17 | Production disabled until approved | Met |
 | 18 | Documentation | Met |
-| 19 | All tests pass | Met (71/71) |
+| 19 | All tests pass | Met (75/75) |
 | 20 | Results labelled | Met |
 
 ## Next concrete task
 
-On a machine with Kalshi access: `kbot discover`, then `kbot collect --days 60`,
-`kbot collect-spot --days 60`, `kbot research`. Start `kbot run` in paper mode at the same time so
-live book snapshots begin accumulating.
+Get spot data so fair_value can be tested: allow api.exchange.coinbase.com in the environment's
+network settings, or import licensed CF Benchmarks history with `kbot import-spot`. Then run
+`kbot collect-spot --days 90` and `kbot research`. The Oct 5 to Oct 23 holdout has now been opened,
+so judge any newly tuned strategy on data after 2026-10-23.

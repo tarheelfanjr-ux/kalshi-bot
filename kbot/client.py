@@ -162,12 +162,20 @@ class PublicClient(_Base):
         return (await self._request("GET", f"/markets/{ticker}/orderbook", params=params)).get(
             "orderbook_fp") or {}
 
-    async def candlesticks(self, series: str, ticker: str, start_ts: int, end_ts: int,
-                           historical: bool = False, period: int = 1):
-        path = (f"/historical/markets/{ticker}/candlesticks" if historical
-                else f"/series/{series}/markets/{ticker}/candlesticks")
+    async def historical_candlesticks(self, ticker: str, start_ts: int, end_ts: int, period: int = 1):
+        """One market. Needed for markets older than the batch endpoint serves (about 2 months).
+        Prices here come as `close`, not `close_dollars`."""
         params = {"start_ts": start_ts, "end_ts": end_ts, "period_interval": period}
-        return (await self._request("GET", path, params=params)).get("candlesticks") or []
+        return (await self._request("GET", f"/historical/markets/{ticker}/candlesticks",
+                                    params=params)).get("candlesticks") or []
+
+    async def batch_candlesticks(self, tickers: list[str], start_ts: int, end_ts: int,
+                                 period: int = 1) -> dict[str, list]:
+        """Up to 100 tickers and 10,000 candles per call. Covers live and historical markets."""
+        params = {"market_tickers": ",".join(tickers), "start_ts": start_ts, "end_ts": end_ts,
+                  "period_interval": period}
+        data = await self._request("GET", "/markets/candlesticks", params=params)
+        return {m["market_ticker"]: m.get("candlesticks") or [] for m in data.get("markets") or []}
 
     async def historical_cutoff(self):
         return await self._request("GET", "/historical/cutoff")

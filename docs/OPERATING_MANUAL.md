@@ -43,7 +43,8 @@ market data. Without it, paper mode polls books over REST and uses Coinbase as t
 
 ```bash
 kbot discover                    # confirm which 15M series exist right now, fee type, sources
-kbot collect --days 60           # settled markets + 1-minute candles (resumable)
+kbot collect --days 60           # settled markets + 1-minute candles (resumable, ~1 hour per 90 days x 4 series)
+kbot verify-data                 # settlement rule, ticker times, gaps, quotes -> reports/data-verification.json
 kbot collect-spot --days 60      # Coinbase 1-minute prices, stored as proxy for each RTI index
 kbot import-spot file.csv --index BRTI   # optional: real index data you are licensed to use
 kbot research                    # writes reports/research-latest.json, holdout stays closed

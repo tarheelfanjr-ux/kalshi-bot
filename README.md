@@ -4,16 +4,17 @@ Research, backtest, paper trade, and (only after manual approval) trade Kalshi m
 that open and close in about 15 minutes, such as `KXBTC15M` (bitcoin up or down).
 
 **Production trading is disabled by default.** No strategy has been shown to be
-profitable yet. See [docs/REPORT.md](docs/REPORT.md) for what is and is not verified.
+profitable. A 90-day real-data backtest (2026-10-23) found no edge. See [docs/REPORT.md](docs/REPORT.md) for what is and is not verified.
 
 ## Quick start
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 cp config.example.toml config.toml
-.venv/bin/pytest                         # 71 tests, no network needed
+.venv/bin/pytest                         # 75 tests, no network needed
 .venv/bin/python -m kbot discover        # list live 15-minute series and markets
 .venv/bin/python -m kbot collect --days 60          # settled markets + minute candles
+.venv/bin/python -m kbot verify-data                # audit settlement, timing, gaps
 .venv/bin/python -m kbot collect-spot --days 60     # Coinbase 1-min prices (index proxy)
 .venv/bin/python -m kbot research        # strategy comparison -> reports/research-latest.json
 .venv/bin/python -m kbot run             # continuous paper trading (default mode)

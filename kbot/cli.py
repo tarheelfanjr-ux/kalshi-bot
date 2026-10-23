@@ -54,7 +54,9 @@ def cmd_collect(s, a):
     from .discovery import Discovery
 
     async def go():
-        c = make_public_client(s)
+        # Unauthenticated reads were throttled near 3.5 req/s (2026-10-23), far below the documented
+        # budget, so pace at 3 req/s instead of burning time in 429 backoff.
+        c = make_public_client(s, max_retries=8, read_tokens_per_s=30)
         db = _db(s)
         series = s.series or await Discovery(c, db).find_series()
         print(await collect_history(c, db, series, max_markets=a.max_markets,
@@ -76,6 +78,15 @@ def cmd_collect_spot(s, a):
 def cmd_import_spot(s, a):
     from .collector import import_spot_csv
     print(import_spot_csv(_db(s), a.csv, a.index), "rows")
+
+
+def cmd_verify_data(s, a):
+    from pathlib import Path
+    from .collector import verify_history
+    rep = verify_history(_db(s), s.series or None)
+    Path("reports").mkdir(exist_ok=True)
+    Path("reports/data-verification.json").write_text(json.dumps(rep, indent=2))
+    print(json.dumps(rep, indent=2))
 
 
 def cmd_research(s, a):
@@ -211,6 +222,7 @@ def main(argv=None):
     c = sub.add_parser("import-spot", help="import a CSV of ts,price for an index")
     c.add_argument("csv")
     c.add_argument("--index", required=True)
+    sub.add_parser("verify-data", help="audit stored history: timing, settlement, gaps, quotes")
     c = sub.add_parser("research", help="strategy comparison report")
     c.add_argument("--open-holdout", action="store_true")
     c = sub.add_parser("backtest")
