@@ -36,7 +36,7 @@ class App:
             raise ValueError("the live app runs in paper, demo, or production mode")
         maker = s.strategy.name == "maker"
         if maker and s.mode != "paper":
-            raise ValueError("the maker strategy runs in paper mode only. It has no real-order path.")
+            raise ValueError("the maker strategy runs in paper mode only. Only its owner lifts this (docs/GO_LIVE.md).")
         self.s = s
         self.db = db or DB(s.db_path)
         self.notify = Notifier(self.db, s.notify_webhook)

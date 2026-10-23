@@ -9,9 +9,7 @@ profitable. A 90-day real-data backtest (2026-10-23) found no edge. See [docs/RE
 ## Quick start
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-cp config.example.toml config.toml
-.venv/bin/pytest                         # 104 tests, no network needed
+scripts/setup.sh                         # venv, dependencies, config files, 104 tests (no network needed)
 .venv/bin/python -m kbot discover        # list live 15-minute series and markets
 .venv/bin/python -m kbot collect --days 60          # settled markets + minute candles
 .venv/bin/python -m kbot verify-data                # audit settlement, timing, gaps
@@ -35,6 +33,7 @@ cp config.example.toml config.toml
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Modules and data flow |
 | [docs/OPERATING_MANUAL.md](docs/OPERATING_MANUAL.md) | Setup, credentials, every command, recovery |
 | [docs/LIVE_CHECKLIST.md](docs/LIVE_CHECKLIST.md) | Steps required before any real-money order |
+| [docs/GO_LIVE.md](docs/GO_LIVE.md) | Maker strategy: paper, then demo, then production, and who lifts each guard |
 | [docs/REPORT.md](docs/REPORT.md) | Status, results, audit, limitations |
 | [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) | Prospective experiments E1 and E2 after the audit |
 

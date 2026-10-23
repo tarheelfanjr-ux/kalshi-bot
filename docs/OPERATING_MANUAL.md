@@ -114,7 +114,9 @@ WantedBy=default.target
 ### Maker strategy (paper only)
 
 The maker strategy runs E2's rule ([EXPERIMENTS.md](EXPERIMENTS.md)) live on production data, with
-no key. It cannot place real orders: it refuses to start in any mode but paper.
+no key. It cannot place real orders: it refuses to start in any mode but paper. The real-order
+path exists and is tested against a mocked exchange. Lifting the guard is the owner's decision,
+step by step in [GO_LIVE.md](GO_LIVE.md).
 
 ```bash
 python -m kbot --config config.maker.toml run          # start. Ctrl-C stops it cleanly
