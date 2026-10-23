@@ -28,3 +28,6 @@ Rules the code enforces:
 - E1 and E2 are judged separately. No combined strategy until both have final results.
 
 Running it: see [OPERATING_MANUAL.md](OPERATING_MANUAL.md#prospective-experiments).
+
+The maker paper bot (`config.maker.toml`) runs E2's rule live as a short, labelled paper test. It
+shares E2's data from Oct 24 on but not its verdict: E2 is still read once, by its frozen rule.

@@ -193,10 +193,6 @@ class _Public(FakePublic):
             if m["ticker"].startswith(params.get("series_ticker", "")):
                 yield m
 
-    async def orderbooks(self, tickers):
-        self.calls.append(("orderbooks", tuple(tickers)))
-        return {t: self.books[t] for t in tickers}
-
     async def fee_changes(self, series_ticker=None):
         return []
 

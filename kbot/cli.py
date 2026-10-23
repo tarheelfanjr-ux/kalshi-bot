@@ -137,6 +137,29 @@ def cmd_experiment(s, a):
     print(f"full report: reports/experiment-{a.name}{'-interim' if a.interim else ''}.json")
 
 
+def cmd_maker_history(s, a):
+    from pathlib import Path
+    from .client import make_public_client
+    from .db import DB
+    from .maker import history
+    if not Path(a.db).exists():
+        sys.exit(f"{a.db} not found. It needs settled markets and minute candles: copy the 90-day dataset "
+                 "there, or run `kbot collect --days 90` with db_path pointing at it.")
+
+    async def go():
+        c = None if a.no_download else make_public_client(s, max_retries=8, read_tokens_per_s=20)
+        rep = await history(c, DB(a.db))
+        if c:
+            await c.close()
+        return rep
+    rep = asyncio.run(go())
+    Path("reports").mkdir(exist_ok=True)
+    Path("reports/maker-history.json").write_text(json.dumps(rep, indent=2, default=str))
+    print(json.dumps({k: rep.get(k) for k in ("label", "sample", "markets", "missing")}, indent=2))
+    print(json.dumps(rep.get("primary", {}).get("net_zero_fee"), indent=2))
+    print("full report: reports/maker-history.json")
+
+
 def cmd_backtest(s, a):
     from .backtest import Costs, chronological_split, metrics, run
     from .collector import load_markets, load_spot
@@ -167,6 +190,9 @@ def cmd_status(s, a):
     p = st["performance"]
     print({k: p[k] for k in ("label", "settled_trades", "net_pnl", "win_rate", "max_drawdown", "fees")})
     print(f"open positions: {st['positions']}\noutstanding orders: {st['orders']}")
+    if s.strategy.name == "maker":
+        from .maker import format_report, report
+        print("\n" + format_report(report(_db(s), st["mode"], s.risk.bankroll)))
 
 
 def cmd_pause(s, a):
@@ -280,6 +306,9 @@ def main(argv=None):
     c.add_argument("--final", action="store_true", help="the one valid reading, after the end date")
     c.add_argument("--interim", action="store_true", help="E2's single futility look after day 28")
     c.add_argument("--force", action="store_true", help="read early: counted and labelled not valid")
+    c = sub.add_parser("maker-history", help="maker rule on downloadable history (candles + public trades)")
+    c.add_argument("--db", default="data/maker-history.sqlite", help="a copy with markets and candles; trades are added")
+    c.add_argument("--no-download", action="store_true")
     c = sub.add_parser("backtest")
     c.add_argument("--strategy", default="fair_value")
     c.add_argument("--split", default="validation", choices=["train", "validation", "all_but_holdout"])

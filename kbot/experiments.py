@@ -69,13 +69,14 @@ def spec_hash(name: str) -> str:
 
 # --- data -----------------------------------------------------------------------------
 
-def markets(db: DB, start: float, end: float) -> list[dict]:
-    """Settled experiment markets opening in [start, end), never before PROSPECTIVE_START,
-    with the previous window's move (known at open) for volatility strata."""
+def markets(db: DB, start: float, end: float, floor: float = PROSPECTIVE_START) -> list[dict]:
+    """Settled experiment markets opening in [start, end), never before `floor` (PROSPECTIVE_START
+    unless a labelled historical check asks otherwise), with the previous window's move (known at
+    open) for volatility strata."""
     rows = db.q(f"SELECT ticker, series, open_ts, close_ts, floor_strike, result, data FROM markets "
                 f"WHERE result IN ('yes','no') AND open_ts >= ? AND open_ts < ? "
                 f"AND series IN ({','.join('?' * len(SERIES))}) ORDER BY series, close_ts",
-                (max(start, PROSPECTIVE_START), end, *SERIES))
+                (max(start, floor), end, *SERIES))
     out, prev = [], {}
     for r in rows:
         m = dict(r)
@@ -264,8 +265,9 @@ def _e2_rows(m, fills, mids, cuts):
     return rows
 
 
-def e2_report(db: DB, start: float, end: float, level: float) -> dict:
-    ms = [m for m in markets(db, start, end)]
+def e2_report(db: DB, start: float, end: float, level: float, floor: float = PROSPECTIVE_START,
+              tickers: set[str] | None = None) -> dict:
+    ms = [m for m in markets(db, start, end, floor) if tickers is None or m["ticker"] in tickers]
     cuts = _terciles(ms)
     bad = bad_clock_windows(db)
     variants = defaultdict(list)

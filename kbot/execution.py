@@ -7,8 +7,9 @@ Rules this module enforces:
   looks it up by client_order_id first.
 * An accepted order is not a filled order. Fills come from the exchange response or
   the reconciliation query, never from assumption.
-* Only immediate-or-cancel taker orders are used for entries, so nothing rests on the
-  book by accident. Resting orders are still tracked and cancellable.
+* Live entries are immediate-or-cancel taker orders, so nothing rests on the book by
+  accident. Resting post-only bids exist only in paper mode (the maker strategy), where
+  they fill only when the public trade tape shows they were hit.
 """
 from __future__ import annotations
 
@@ -49,6 +50,7 @@ class ExchangeOrder:
     remaining: float
     avg_price: float | None   # in the order's outcome-side price
     fees: float
+    maker: bool = False
 
 
 class Adapter(Protocol):
@@ -65,6 +67,8 @@ class PaperAdapter:
 
     Fill model (conservative): an IOC buy takes only `fill_fraction` of the displayed size at
     each level at or under the limit, to account for latency and other takers. Taker fees.
+    A post-only bid rests and fills only through `fill`, which the maker engine calls when a
+    public trade prints through its price. A post-only bid that would cross is rejected.
     """
     mode = "paper"
 
@@ -73,10 +77,14 @@ class PaperAdapter:
         self.get_book, self.fill_fraction, self.max_age = get_book, fill_fraction, max_book_age_s
         self.orders: dict[str, ExchangeOrder] = {}
 
-    async def submit(self, *, ticker, outcome_side, limit_price, count, client_order_id):
+    async def submit(self, *, ticker, outcome_side, limit_price, count, client_order_id, post_only=False):
         book = self.get_book(ticker)
         if book is None or book.age() > self.max_age:
             eo = ExchangeOrder(None, "rejected", 0, count, None, 0)
+        elif post_only:
+            ask = book.best_ask(outcome_side)
+            eo = (ExchangeOrder(None, "rejected", 0, count, None, 0) if ask and limit_price >= ask[0] - 1e-9
+                  else ExchangeOrder("paper-" + client_order_id[:8], "resting", 0, count, None, 0, maker=True))
         else:
             filled = cost = 0.0
             for price, size in book.asks(outcome_side):
@@ -93,7 +101,24 @@ class PaperAdapter:
         return eo
 
     async def cancel(self, ticker, exchange_order_id):
-        return None
+        for eo in self.orders.values():
+            if eo.exchange_order_id == exchange_order_id and eo.status == "resting":
+                eo.status, eo.remaining = "canceled", 0
+
+    def fill(self, client_order_id: str, price: float, fee_paid: float) -> bool:
+        """Fill a resting bid in full at its own price. Only the maker engine calls this."""
+        eo = self.orders.get(client_order_id)
+        if eo is None or eo.status != "resting":
+            return False
+        eo.status, eo.filled, eo.remaining, eo.avg_price, eo.fees = "executed", eo.filled + eo.remaining, 0, price, fee_paid
+        return True
+
+    def restore(self, client_order_id: str, count: float, resting: bool = True) -> None:
+        """Re-register a paper bid after a restart (paper orders live only in memory). One that should
+        no longer rest comes back cancelled, so reconciliation closes it."""
+        self.orders.setdefault(client_order_id, ExchangeOrder(
+            "paper-" + client_order_id[:8], "resting" if resting else "canceled", 0, count if resting else 0,
+            None, 0, maker=True))
 
     async def lookup(self, ticker, client_order_id, exchange_order_id):
         return self.orders.get(client_order_id)
@@ -203,9 +228,9 @@ class OrderManager:
                 fill_cost = avg * eo.filled - prev_cost
                 fill_fee = max(0.0, eo.fees - o["fees"])
                 self.db.x("INSERT OR IGNORE INTO fills(fill_id,client_order_id,mode,ticker,outcome_side,count,"
-                          "price,fee,is_taker,ts) VALUES(?,?,?,?,?,?,?,?,1,?)",
+                          "price,fee,is_taker,ts) VALUES(?,?,?,?,?,?,?,?,?,?)",
                           (f"{coid}:{eo.filled}", coid, self.mode, o["ticker"], o["outcome_side"], new_fill,
-                           fill_cost / new_fill, fill_fee, time.time()))
+                           fill_cost / new_fill, fill_fee, 0 if eo.maker else 1, time.time()))
                 close_ts = self.db.one("SELECT close_ts FROM markets WHERE ticker=?", (o["ticker"],))
                 self.db.x(
                     "INSERT INTO positions(mode,ticker,outcome_side,count,cost,fees,close_ts,status,opened_at) "
@@ -226,7 +251,7 @@ class OrderManager:
 
     # --- public API ---------------------------------------------------------
     async def place(self, *, ticker: str, outcome_side: str, limit_price: float, count: float,
-                    signal_id: int | None = None, purpose: str = "entry") -> str:
+                    signal_id: int | None = None, purpose: str = "entry", post_only: bool = False) -> str:
         coid = str(uuid.uuid4())
         self.db.x("INSERT INTO orders(client_order_id,mode,ticker,outcome_side,limit_price,count,state,purpose,"
                   "signal_id,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending_submit',?,?,?,?)",
@@ -235,7 +260,8 @@ class OrderManager:
         self.db.event("order_submit", self.mode, ticker, coid=coid, side=outcome_side, limit=limit_price, count=count)
         try:
             eo = await self.adapter.submit(ticker=ticker, outcome_side=outcome_side, limit_price=limit_price,
-                                           count=count, client_order_id=coid)
+                                           count=count, client_order_id=coid,
+                                           **({"post_only": True} if post_only else {}))
         except OrderStateUnknown as e:
             self._set_state(coid, "unknown", last_error=str(e)[:500])
             self.notify(f"order {coid} state unknown after timeout; will reconcile, not resend")

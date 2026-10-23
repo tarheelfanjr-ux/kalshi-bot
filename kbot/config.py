@@ -33,6 +33,7 @@ class RiskLimits:
     max_daily_loss_pct: float = 0.02        # realized, per UTC day, persisted
     max_consecutive_losses: int = 5
     max_open_positions: int = 3
+    max_market_inventory: int = 1          # contracts held per market side (maker strategy)
 
 
 @dataclass

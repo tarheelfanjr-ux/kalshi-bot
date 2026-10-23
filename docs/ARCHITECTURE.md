@@ -37,6 +37,7 @@
 | `collector.py` | Historical markets and candles, Coinbase proxy prices, CSV import, public trades summed per second. |
 | `research.py` | Calibration, strategy comparison, random baseline, sensitivity, holdout control, verdict. |
 | `recorder.py` | Read-only prospective recorder: books, CF RTI and Coinbase ticks, fee state, periodic backfill. |
+| `maker.py` | Maker strategy: E2's quotes live in paper mode, fills from the public trade tape, comparison report, historical check. |
 | `experiments.py` | Frozen specs and once-only scoring for prospective experiments E1 and E2. |
 | `app.py` | Long-running loop, health, settlement, reconciliation, snapshots for future research. |
 | `reports.py` | Per-mode performance, calibration, deterioration check, daily report. |

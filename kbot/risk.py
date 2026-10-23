@@ -93,6 +93,33 @@ class RiskManager:
             return f"{self.consecutive_losses()} consecutive losses: review required"
         return None
 
+    def approve_quote(self, ticker: str, side: str, price: float, count: float, fee_paid: float, *,
+                      healthy: bool = True, health_reason: str = "") -> Decision:
+        """Gate for a resting maker bid. Worst case: it fills and settles at $0."""
+        L = self.limits
+        if (h := self.halted()):
+            return Decision(False, 0, f"halted ({h})")
+        if not healthy:
+            return Decision(False, 0, f"unhealthy: {health_reason}")
+        if (t := self.check_limits()):
+            self.trip(t)
+            return Decision(False, 0, t, trip=t)
+        if not 0 < price < 1 or count < 1:
+            return Decision(False, 0, "invalid price or size")
+        held = self.db.one("SELECT COALESCE(SUM(count),0) n FROM positions WHERE mode=? AND ticker=? "
+                           "AND outcome_side=? AND status='open'", (self.mode, ticker, side))["n"]
+        if held + count > L.max_market_inventory:
+            return Decision(False, 0, f"inventory {held:.0f} + {count:.0f} > {L.max_market_inventory} per market side")
+        busy = self.busy_tickers() - {ticker}
+        if len(busy) >= L.max_open_positions:
+            return Decision(False, 0, f"{len(busy)} other markets with positions or orders >= {L.max_open_positions}")
+        worst = count * price + fee_paid
+        budget = min(L.max_position_risk_pct * L.bankroll, L.max_open_risk_pct * L.bankroll - self.open_risk())
+        if worst > budget + 1e-9:
+            return Decision(False, 0, f"worst-case loss ${worst:.2f} > risk budget ${budget:.2f}")
+        return Decision(True, float(count), f"approved {count:.0f} at {price:.2f}, worst-case loss "
+                                            f"${worst:.2f} of ${budget:.2f} budget")
+
     def approve(self, c: Candidate, *, healthy: bool = True, health_reason: str = "") -> Decision:
         L = self.limits
         if (h := self.halted()):

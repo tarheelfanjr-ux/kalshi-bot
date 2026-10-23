@@ -112,13 +112,17 @@ async def collect_history(client: PublicClient, db: DB, series: list[str], max_m
     return counts
 
 
-async def collect_trades(client: PublicClient, db: DB, since_ts: float) -> int:
-    """Every trade of the stored settled markets closing at or after since_ts, summed per second,
-    price and taker side. Resumable: markets that already have trade rows are skipped."""
+async def collect_trades(client: PublicClient, db: DB, since_ts: float, tickers: list[str] | None = None) -> int:
+    """Every trade of the stored settled markets closing at or after since_ts (only `tickers`, if
+    given), summed per second, price and taker side. Resumable: markets that already have trade
+    rows are skipped."""
     cut = await client.historical_cutoff()
     cutoff = ts(cut.get("trades_created_ts")) or 0.0
     todo = db.q("SELECT ticker, open_ts, close_ts FROM markets m WHERE result IN ('yes','no') AND close_ts >= ? "
                 "AND NOT EXISTS (SELECT 1 FROM trades t WHERE t.ticker = m.ticker) ORDER BY close_ts", (since_ts,))
+    if tickers is not None:
+        keep = set(tickers)
+        todo = [m for m in todo if m["ticker"] in keep]
     for m in todo:
         agg: dict[tuple, list] = defaultdict(lambda: [0.0, 0])
         # A market that straddles the historical cutoff has trades on both endpoints.

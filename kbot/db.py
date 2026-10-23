@@ -63,6 +63,12 @@ CREATE TABLE IF NOT EXISTS trades (
 CREATE TABLE IF NOT EXISTS index_ticks (
   index_id TEXT NOT NULL, source TEXT NOT NULL, recv_ts REAL NOT NULL, src_ts REAL, value REAL NOT NULL,
   avg60 REAL, final_avg REAL, PRIMARY KEY (index_id, source, recv_ts)) WITHOUT ROWID;
+-- Maker strategy (kbot/maker.py): every quote the rule posts, with its risk decision and simulated fill.
+CREATE TABLE IF NOT EXISTS quotes (
+  id INTEGER PRIMARY KEY, mode TEXT NOT NULL, ticker TEXT NOT NULL, side TEXT NOT NULL, price REAL NOT NULL,
+  quote_ts REAL NOT NULL, end_ts REAL NOT NULL, yes_bid REAL, yes_ask REAL, queue REAL, seconds_left REAL,
+  client_order_id TEXT, risk TEXT, fill_ts REAL, fill_trade_price REAL, status TEXT NOT NULL DEFAULT 'open');
+CREATE INDEX IF NOT EXISTS quotes_status ON quotes(mode, status, ticker);
 CREATE TABLE IF NOT EXISTS equity (
   ts REAL NOT NULL, mode TEXT NOT NULL, cash REAL, open_value REAL, equity REAL);
 """

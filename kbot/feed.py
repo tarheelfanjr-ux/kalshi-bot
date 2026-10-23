@@ -70,14 +70,16 @@ class RestBookPoller:
         self.last_ok = 0.0
 
     async def poll(self, tickers: list[str]) -> None:
-        for t in tickers:
+        for i in range(0, len(tickers), 100):          # one request per 100 books
             try:
-                ob = await self.client.orderbook(t)
+                got = await self.client.orderbooks(tickers[i:i + 100])
             except Exception as e:
-                log.warning("orderbook %s failed: %s", t, e)
+                log.warning("orderbooks failed: %s", e)
                 continue
-            self.books[t] = OrderBook.from_rest(t, ob)
-            self.last_ok = time.time()
+            now = time.time()
+            for t, ob in got.items():
+                self.books[t] = OrderBook.from_rest(t, ob, now)
+            self.last_ok = now
 
 
 class CoinbaseSpot:

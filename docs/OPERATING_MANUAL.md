@@ -111,6 +111,43 @@ WantedBy=default.target
 
 `systemctl --user enable --now kbot-paper`. On macOS use a launchd plist with the same command.
 
+### Maker strategy (paper only)
+
+The maker strategy runs E2's rule ([EXPERIMENTS.md](EXPERIMENTS.md)) live on production data, with
+no key. It cannot place real orders: it refuses to start in any mode but paper.
+
+```bash
+python -m kbot --config config.maker.toml run          # start. Ctrl-C stops it cleanly
+python -m kbot --config config.maker.toml status       # health, limits, and the comparison report
+python -m kbot --config config.maker.toml dashboard    # http://127.0.0.1:8765
+python -m kbot --config config.maker.toml pause --reason "..."   # no new quotes
+python -m kbot --config config.maker.toml estop --reason "..."   # block everything
+```
+
+What it does each minute from 840 s to 60 s before close, in BTC, ETH, SOL and XRP: post a bid at
+the best YES bid and at the best NO bid. A bid fills only when a public trade prints at a worse
+price on its side at least 1 s after it was posted. A trade at exactly our price does not fill it.
+At most one fill per side per market. Held to settlement. Fees use the series' fee type (no maker
+fee on these series today), with 0.0175 and the taker rate shown as stress cases.
+
+Two records come out of the same quotes and the same fills:
+
+* **Research log** (`quotes` table): every quote the rule wanted, 1 contract each, no risk limits.
+  This is the short prospective test of the rule.
+* **Paper account** (`orders`, `fills`, `positions`): only what the `[risk]` limits allow. With the
+  $25 bankroll and 1% per position, only bids at about 0.25 or less fit, so the account holds the
+  cheap side of a market and never the hedge.
+
+fair_value runs beside it as a shadow benchmark (first signal per market, 1 contract at the ask,
+taker fee). It is logged, never traded. `status` shows all three next to the no-trade baseline,
+gross and net, with 95% CIs that resample whole settlement windows.
+
+The short test is a check that the bot works and a rough read. It is not E2's frozen evaluation.
+Changing the rule because of what it shows makes E2 invalid. Read `status`, not single trades.
+
+`kbot maker-history --db <copy with markets and candles>` runs the same rule on a seeded sample of
+markets that closed before the audit holdout (Oct 5, 14:15 UTC), downloading their public trades.
+
 ## 5. Demo account trading
 
 `KBOT_MODE=demo kbot run`. Orders go to the demo exchange, priced off demo books. On start it
