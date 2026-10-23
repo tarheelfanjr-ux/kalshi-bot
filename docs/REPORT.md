@@ -3,14 +3,14 @@
 ## Bottom line
 
 **A 90-day backtest on real Kalshi data found no profitable strategy. Do not paper or live trade
-momentum or mean reversion.** fair_value is still untested because this environment blocks every
-spot price feed. Production trading is disabled and no orders were sent.
+momentum, mean reversion, or fair_value.** fair_value was tested with Coinbase 1-minute prices as a
+proxy for the CF Benchmarks index. Production trading is disabled and no orders were sent.
 
 All numbers below are HISTORICAL BACKTEST (simulated fills on Kalshi minute candles).
 
 * Data: 34,128 settled markets (KXBTC15M, KXETH15M, KXSOL15M, KXXRP15M), 2026-07-25 14:30 to
-  2026-10-23 14:30 UTC, 477,435 minute decision points. 34,123 results match the settlement rule,
-  0 mismatches, 5 not checkable. Only gaps are 13 Thursday maintenance windows. 24 markets had no candles.
+  2026-10-23 14:30 UTC, 477,435 minute decision points. 34,127 results match the settlement rule,
+  0 mismatches, 1 not checkable (blank expiration value). Only gaps are 13 Thursday maintenance windows. 24 markets had no candles.
 * Split by time: train Jul 25 to Sep 17 (20,462 markets), validation Sep 17 to Oct 5 (6,821),
   holdout Oct 5 to Oct 23 (6,821). Holdout opened once per run below.
 
@@ -20,14 +20,20 @@ All numbers below are HISTORICAL BACKTEST (simulated fills on Kalshi minute cand
 | $25 bankroll (configured) | momentum | 6 trades, -$0.44 | 2 trades, -$0.50 | 8 trades, +$0.05 |
 | $1,000 diagnostic | momentum | 5,284 trades, -$788.85 | 1,922 trades, -$238.15, CI/trade [-0.240, -0.008] | 1,718 trades, -$255.06, CI/trade [-0.281, -0.024] |
 | $1,000 diagnostic | mean_reversion | 769 trades, -$129.40 | 269 trades, -$41.82 | 268 trades, -$36.99 |
+| $25 bankroll (configured) | fair_value | 383 trades, -$1.01, max DD $8.93 | 112 trades, -$2.52, CI/trade [-0.098, +0.059] | 127 trades, +$2.92, CI/trade [-0.072, +0.135] |
+| $1,000 diagnostic | fair_value | 1,900 trades, -$62.21 | 620 trades, -$113.53, CI/trade [-0.373, +0.023] | 517 trades, -$43.29, CI/trade [-0.284, +0.129] |
 
-fair_value, market_implied, and no_trade made 0 trades in every period (fair_value: no spot data;
-market_implied: correct, costs leave no free edge). Full reports: `reports/research-A-configured.json`,
-`reports/research-B-diagnostic.json`, `reports/data-verification-90d.json`.
+market_implied and no_trade made 0 trades in every period (market_implied: correct, costs leave no
+free edge). fair_value beat 95% of random-direction runs in validation but lost after spread and fees;
+its entry model expected about 10 cents of edge per contract and realized about zero. Coinbase sits a
+median 0.5 to 1.3 bps under the settlement value, and its up/down call matches the official result in
+93% of windows. The holdout counter reads 4 because the full report was rerun per bankroll; fair_value's
+rules never changed. Full reports: `reports/research-A2-configured.json`, `reports/research-B2-diagnostic.json`,
+`reports/data-verification-90d.json` in the project folder.
 
-Remaining restrictions: WebSocket returns 401 without an API key. Coinbase and every other spot
-source are blocked by the environment's network policy. Unauthenticated Kalshi reads are throttled
-near 3.5 req/s.
+Remaining restrictions: WebSocket returns 401 without an API key. Coinbase Exchange is reachable;
+Kraken, Binance, CF Benchmarks and other spot sources are still blocked. Unauthenticated Kalshi reads
+are throttled near 3.5 req/s.
 
 ## Phase reports
 
@@ -123,7 +129,7 @@ near 3.5 req/s.
 
 ## Next concrete task
 
-Get spot data so fair_value can be tested: allow api.exchange.coinbase.com in the environment's
-network settings, or import licensed CF Benchmarks history with `kbot import-spot`. Then run
-`kbot collect-spot --days 90` and `kbot research`. The Oct 5 to Oct 23 holdout has now been opened,
-so judge any newly tuned strategy on data after 2026-10-23.
+None of the three strategies should go to paper or live trading. To keep working on fair_value, test
+it on licensed CF Benchmarks index history (`kbot import-spot`) instead of the Coinbase proxy, and find
+why its probabilities run about 10 cents too confident. The Oct 5 to Oct 23 holdout has been opened,
+so judge any change on data after 2026-10-23.
