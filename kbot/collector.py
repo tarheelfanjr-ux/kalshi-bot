@@ -4,6 +4,7 @@ Sources (all real, nothing synthesized):
   * Kalshi settled markets for each 15M series (live + /historical endpoints)
   * Kalshi 1-minute candlesticks for each market (top-of-book bid/ask per minute)
   * Coinbase 1-minute candles as a *proxy* for the CF Benchmarks settlement index
+  * Pyth Benchmarks 1-minute bars, the settlement source of the metals, FX, Brent and yield series
   * Any CSV of (timestamp, price) the operator supplies, e.g. licensed index data
 """
 from __future__ import annotations
@@ -164,6 +165,62 @@ async def collect_coinbase_spot(db: DB, product: str, index_id: str, start: floa
         t = t2
         await asyncio.sleep(0.35)  # stay well under Coinbase public limits
     return n
+
+
+# Pyth symbols from each series' settlement source on Kalshi (2026-10-23). The EUR, JPY, CAD and AUD
+# series link only to pythdata.app, so their symbols follow GBP's pattern and are unverified.
+PYTH_SYMBOLS = {"KXCOPPER15M": "Commodities.Index.CU/USD", "KXPLATINUM15M": "Metal.XPT/USD",
+                "KXPALLADIUM15M": "Metal.XPD/USD", "KXEURUSD15M": "FX.EUR/USD", "KXGBPUSD15M": "FX.GBP/USD",
+                "KXUSDJPY15M": "FX.USD/JPY", "KXUSDCAD15M": "FX.USD/CAD", "KXAUDUSD15M": "FX.AUD/USD",
+                "KXBRENT15M": "Commodities.Index.BRENT/USD", "KX2YRRATE15M": "InterestRate.US2Y",
+                "KX5YRRATE15M": "InterestRate.US5Y", "KX10YRRATE15M": "InterestRate.US10Y",
+                "KX30YRRATE15M": "InterestRate.US30Y"}
+
+
+async def collect_pyth(db: DB, symbol: str, start: float, end: float, api_key: str | None = None,
+                       http: httpx.AsyncClient | None = None) -> int:
+    """Pyth Benchmarks 1-minute bars through its TradingView shim, stored in `spot` as "pyth:<symbol>"
+    at bar start + 60 s, the same convention as Coinbase. Never run against the real API from here
+    (host blocked): `pyth_strike_check` says whether that convention and the symbol are right."""
+    http = http or httpx.AsyncClient(timeout=20)
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    n, t = 0, int(start)
+    while t < end:
+        t2 = int(min(end, t + 86400))
+        for attempt in range(6):
+            r = await http.get("https://benchmarks.pyth.network/v1/shims/tradingview/history", headers=headers,
+                               params={"symbol": symbol, "resolution": "1", "from": t, "to": t2})
+            if r.status_code != 429:
+                break
+            await asyncio.sleep(2 ** attempt)
+        r.raise_for_status()
+        bars = r.json()
+        if bars.get("s") == "ok":
+            with db.tx():
+                for bt, close in zip(bars["t"], bars["c"]):
+                    db.x("INSERT OR IGNORE INTO spot(index_id,ts,value) VALUES(?,?,?)",
+                         (f"pyth:{symbol}", float(bt) + 60, float(close)))
+                    n += 1
+        t = t2
+        await asyncio.sleep(0.2)   # the shim allows 90 requests per 10 s
+    return n
+
+
+def pyth_strike_check(db: DB, series: str) -> dict[str, float | None]:
+    """Each market's floor_strike is the Pyth price at its open, fixed before trading starts, so it checks
+    the stored bars without touching any outcome. Share of markets within 1e-6 relative, per offset."""
+    sym = f"pyth:{PYTH_SYMBOLS[series]}"
+    rows = db.q("SELECT open_ts, floor_strike FROM markets WHERE series=? AND floor_strike IS NOT NULL", (series,))
+    out = {}
+    for off in (0, -60, 60):
+        hit = tot = 0
+        for m in rows:
+            p = db.one("SELECT value FROM spot WHERE index_id=? AND ts=?", (sym, m["open_ts"] + off))
+            if p:
+                tot += 1
+                hit += abs(p["value"] - m["floor_strike"]) <= 1e-6 * abs(m["floor_strike"])
+        out[f"offset {off:+d} s"] = round(hit / tot, 4) if tot else None
+    return out
 
 
 def import_spot_csv(db: DB, path: str, index_id: str) -> int:

@@ -79,6 +79,19 @@ def cmd_collect_spot(s, a):
         print(f"{series}: {n} one-minute Coinbase points stored as proxy for {idx}")
 
 
+def cmd_collect_pyth(s, a):
+    import os
+    from .collector import PYTH_SYMBOLS, collect_pyth, pyth_strike_check
+    db = _db(s)
+    for series in (s.series or list(PYTH_SYMBOLS)):
+        if series not in PYTH_SYMBOLS:
+            continue
+        sym = PYTH_SYMBOLS[series]
+        n = asyncio.run(collect_pyth(db, sym, time.time() - a.days * 86400, time.time(),
+                                     api_key=os.environ.get("PYTH_API_KEY")))
+        print(f"{series}: {n} one-minute Pyth bars for {sym}; floor_strike match {pyth_strike_check(db, series)}")
+
+
 def cmd_import_spot(s, a):
     from .collector import import_spot_csv
     print(import_spot_csv(_db(s), a.csv, a.index), "rows")
@@ -291,6 +304,8 @@ def main(argv=None):
     c.add_argument("--trades", action="store_true", help="also download public trades for those markets")
     c = sub.add_parser("collect-spot", help="download Coinbase 1-minute prices as an index proxy")
     c.add_argument("--days", type=float, default=60)
+    c = sub.add_parser("collect-pyth", help="download Pyth 1-minute bars for the Pyth-settled series")
+    c.add_argument("--days", type=float, default=70)
     c = sub.add_parser("import-spot", help="import a CSV of ts,price for an index")
     c.add_argument("csv")
     c.add_argument("--index", required=True)
