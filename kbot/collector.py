@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from .backtest import Candle, MarketData
-from .client import PublicClient
+from .client import KalshiError, PublicClient
 from .db import DB
 from .discovery import MarketInfo, is_short_window, num, ts
 
@@ -96,7 +96,12 @@ async def collect_history(client: PublicClient, db: DB, series: list[str], max_m
             got = await client.batch_candlesticks([m.ticker for m in chunk], *_batch_window(chunk))
             for m in chunk:
                 if not got.get(m.ticker):
-                    got[m.ticker] = await client.historical_candlesticks(m.ticker, *_batch_window([m]))
+                    try:
+                        got[m.ticker] = await client.historical_candlesticks(m.ticker, *_batch_window([m]))
+                    except KalshiError as e:
+                        if e.status != 404:
+                            raise
+                        got[m.ticker] = []      # a recent market with no candles is not in the archive either
             by_ticker = {m.ticker: m for m in chunk}
             with db.tx():
                 for ticker, cs in got.items():

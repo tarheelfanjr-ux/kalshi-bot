@@ -72,6 +72,20 @@ async def test_collect_falls_back_to_historical_endpoint_for_old_markets():
     assert (r["yes_bid"], r["yes_ask"], r["volume"]) == (0.4, 0.42, 2.0)
 
 
+async def test_collect_skips_a_recent_market_with_no_candles_anywhere():
+    from kbot.client import KalshiError
+
+    class NoCandles(FakeHistory):
+        async def historical_candlesticks(self, ticker, start, end, period=1):
+            raise KalshiError(404, {"error": {"code": "not_found"}}, "/historical")
+    db = DB(":memory:")
+    fake = NoCandles([api("KXBTC15M-26OCT231000-00", T1, 99.5, 100.0, "yes"),
+                      api("KXBTC15M-26OCT231015-15", T2, 100.0, 99.0, "no")],
+                     {"KXBTC15M-26OCT231015-15": [candle(T2 - 600, 0.6, 0.61)]})
+    assert await collect_history(fake, db, ["KXBTC15M"]) == {"KXBTC15M": 2}
+    assert [r["ticker"] for r in db.q("SELECT DISTINCT ticker FROM candles")] == ["KXBTC15M-26OCT231015-15"]
+
+
 async def test_verify_flags_result_and_timing_problems():
     db = DB(":memory:")
     ms = [api("KXBTC15M-26OCT231000-00", T1, 99.5, 100.0, "yes"),

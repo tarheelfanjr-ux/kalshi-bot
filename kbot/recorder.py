@@ -1,7 +1,7 @@
 """Prospective recorder for the experiments that start after 2026-10-23 (docs/EXPERIMENTS.md).
 
 Records what cannot be downloaded later, stamped with local receive time:
-  * order books of the open 15M markets every `book_every_s` (batch REST, no key needed;
+  * order books of the open markets in RECORD_SERIES every `book_every_s` (batch REST, no key needed;
     WebSocket books instead when a read-only production key is configured)
   * CF Benchmarks RTI ticks from the Kalshi WebSocket (only with that key)
   * the Coinbase ticker once a second, E1's comparison feed
@@ -31,10 +31,17 @@ from .feed import UNDERLYING, CoinbaseSpot, SpotStore, WsFeed
 
 log = logging.getLogger(__name__)
 
+# Recorded for candidate experiments that are not frozen yet: Pyth-settled series with wider spreads,
+# and new wide-spread series (docs/EXPERIMENTS.md). E1 and E2 read only SERIES, so these never reach them.
+CANDIDATE_SERIES = ("KXCOPPER15M", "KXPLATINUM15M", "KXPALLADIUM15M", "KXEURUSD15M", "KXGBPUSD15M",
+                    "KXUSDJPY15M", "KXUSDCAD15M", "KXAUDUSD15M", "KXBRENT15M", "KX2YRRATE15M",
+                    "KX5YRRATE15M", "KX10YRRATE15M", "KX30YRRATE15M")
+RECORD_SERIES = SERIES + CANDIDATE_SERIES
+
 
 async def backfill(client: PublicClient, db: DB, since_ts: float) -> int:
-    """Settled markets, minute candles and trades for the experiment series. Resumable."""
-    await collect_history(client, db, list(SERIES), max_markets=10**6, since_ts=since_ts)
+    """Settled markets, minute candles and trades for every recorded series. Resumable."""
+    await collect_history(client, db, list(RECORD_SERIES), max_markets=10**6, since_ts=since_ts)
     return await collect_trades(client, db, since_ts)
 
 
@@ -47,7 +54,7 @@ class Recorder:
         self.public = public or make_public_client(s, read_tokens_per_s=10)
         self.slow = slow or make_public_client(s, read_tokens_per_s=15, max_retries=8)
         self.http = http or httpx.AsyncClient(timeout=5)
-        self.discovery = Discovery(self.public, db, list(SERIES))
+        self.discovery = Discovery(self.public, db, list(RECORD_SERIES))
         self.books: dict[str, OrderBook] = {}
         self.ws = None
         if s.data_key_id and s.data_private_key_path:
@@ -99,7 +106,8 @@ class Recorder:
         markets = [m for m in self.discovery.markets.values() if m.open_ts <= now < m.close_ts]
         if self._every("books", self.book_every_s - 0.5, now):   # ticks land on whole seconds, give or take
             if self.ws:
-                self.ws.set_markets({m.ticker for m in markets}, {UNDERLYING[m.series][0] for m in markets})
+                self.ws.set_markets({m.ticker for m in markets},
+                                    {UNDERLYING[m.series][0] for m in markets if m.series in UNDERLYING})
             elif markets:
                 got = await self.public.orderbooks(sorted(m.ticker for m in markets))
                 recv = time.time()
@@ -161,10 +169,10 @@ class Recorder:
                    float(final) if final else None))
 
     async def log_fees(self) -> None:
-        """E2 assumes a zero maker fee, so any change to the fee type is recorded hourly."""
-        series = {s: await self.public.series(s) or {} for s in SERIES}
+        """E2 and the candidates assume a zero maker fee, so any change to the fee type is recorded hourly."""
+        series = {s: await self.public.series(s) or {} for s in RECORD_SERIES}
         overrides = [o async for o in self.public.paginate("/events/fee_changes", "event_fee_changes")
-                     if o.get("series_ticker") in SERIES]
+                     if o.get("series_ticker") in RECORD_SERIES]
         self.db.event("fee_state", series={s: [m.get("fee_type"), m.get("fee_multiplier")] for s, m in series.items()},
                       scheduled=await self.public.fee_changes(), event_overrides=overrides)
 

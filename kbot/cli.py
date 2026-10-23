@@ -50,7 +50,7 @@ def cmd_discover(s, a):
 
 def cmd_collect(s, a):
     from .client import make_public_client
-    from .collector import collect_history
+    from .collector import collect_history, collect_trades
     from .discovery import Discovery
 
     async def go():
@@ -59,8 +59,12 @@ def cmd_collect(s, a):
         c = make_public_client(s, max_retries=8, read_tokens_per_s=30)
         db = _db(s)
         series = s.series or await Discovery(c, db).find_series()
-        print(await collect_history(c, db, series, max_markets=a.max_markets,
-                                    since_ts=time.time() - a.days * 86400))
+        since = time.time() - a.days * 86400
+        print(await collect_history(c, db, series, max_markets=a.max_markets, since_ts=since))
+        if a.trades:
+            print(await collect_trades(c, db, since, tickers=[r["ticker"] for r in db.q(
+                f"SELECT ticker FROM markets WHERE series IN ({','.join('?' * len(series))})", tuple(series))]),
+                "markets got trades")
         await c.close()
     asyncio.run(go())
 
@@ -284,6 +288,7 @@ def main(argv=None):
     c = sub.add_parser("collect", help="download settled markets + minute candles")
     c.add_argument("--max-markets", type=int, default=3000)
     c.add_argument("--days", type=float, default=60)
+    c.add_argument("--trades", action="store_true", help="also download public trades for those markets")
     c = sub.add_parser("collect-spot", help="download Coinbase 1-minute prices as an index proxy")
     c.add_argument("--days", type=float, default=60)
     c = sub.add_parser("import-spot", help="import a CSV of ts,price for an index")

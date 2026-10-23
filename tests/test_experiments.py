@@ -224,3 +224,24 @@ async def test_recorder_writes_books_coinbase_and_rti_ticks_with_receive_time(se
         now + 3, 1792778448.765, 81001.0, 80999.1, 80998.0)
     assert ("orderbooks", ("KXBTC15M-R",)) in pub.calls and db.get("recorder_heartbeat") == now + 2
     assert db.one("SELECT 1 FROM events WHERE kind='fee_state'") is not None
+
+
+async def test_recorder_also_records_candidate_series_but_experiments_ignore_them(settings):
+    import time
+    from kbot.experiments import coverage
+    now = time.time()
+    ms = {t: api_market(t, now, close_in=600) for t in ("KXBTC15M-R", "KXEURUSD15M-R")}
+    ms["KXEURUSD15M-R"]["series_ticker"] = "KXEURUSD15M"
+    book = {"yes_dollars": [["0.40", "10"]], "no_dollars": [["0.58", "7"]]}
+    pub = _Public(ms, {t: book for t in ms})
+    cb = httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(
+        200, json={"price": "81000.5", "time": "2026-10-23T18:00:48Z"})))
+    db = DB(":memory:")
+    rec = Recorder(settings, db, public=pub, slow=pub, http=cb)
+    await rec.tick(now)
+    assert {r["ticker"] for r in db.q("SELECT ticker FROM snapshots")} == set(ms)
+    assert {r["index_id"] for r in db.q("SELECT index_id FROM index_ticks")} == {"BTC-USD"}   # no Coinbase feed for FX
+    for t in ms:
+        db.x("UPDATE markets SET result='yes', open_ts=? WHERE ticker=?", (1792800000, t))
+    cov, _ = coverage(db, "E2", 0, 1792900000)
+    assert cov["settled_markets"] == 1
