@@ -88,7 +88,7 @@ def cmd_collect_pyth(s, a):
             continue
         sym = PYTH_SYMBOLS[series]
         n = asyncio.run(collect_pyth(db, sym, time.time() - a.days * 86400, time.time(),
-                                     api_key=os.environ.get("PYTH_API_KEY")))
+                                     api_key=os.environ.get("PYTH_API_KEY"), channel=a.channel))
         print(f"{series}: {n} one-minute Pyth bars for {sym}; floor_strike match {pyth_strike_check(db, series)}")
 
 
@@ -306,6 +306,7 @@ def main(argv=None):
     c.add_argument("--days", type=float, default=60)
     c = sub.add_parser("collect-pyth", help="download Pyth 1-minute bars for the Pyth-settled series")
     c.add_argument("--days", type=float, default=70)
+    c.add_argument("--channel", default="fixed_rate@200ms", help="Pyth price channel your key is entitled to")
     c = sub.add_parser("import-spot", help="import a CSV of ts,price for an index")
     c.add_argument("csv")
     c.add_argument("--index", required=True)

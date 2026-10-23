@@ -43,6 +43,18 @@ def prob_settle_yes(spot: float, strike: float, tau: float, sigma: float,
     return norm_cdf((mean - strike) / sd)
 
 
+def prob_settle_yes_print(spot: float, strike: float, tau: float, sigma: float, tick: float = 0.0) -> float:
+    """P(one print at close, rounded to `tick`, >= strike), ties YES. For Pyth-settled series, which settle
+    on a single 1-minute candle close, not a 60 s average. sigma is per sqrt(second) of log price."""
+    if spot <= 0 or strike <= 0:
+        raise ValueError("spot and strike must be positive")
+    edge = strike - tick / 2   # a rounded print >= strike iff the raw print >= strike - half a tick
+    sd = max(sigma, 0.0) * math.sqrt(max(tau, 0.0))
+    if sd <= 1e-12:
+        return 1.0 if spot >= edge else 0.0
+    return norm_cdf(math.log(spot / edge) / sd)
+
+
 def realized_sigma(points: Sequence[tuple[float, float]], lookback_s: float,
                    now: float | None = None, min_points: int = 20) -> float | None:
     """Volatility per sqrt(second) from (ts, price) pairs. Returns None if too little data."""
@@ -77,4 +89,6 @@ if __name__ == "__main__":
     assert abs(prob_settle_yes(100, 100, 600, 0.0005) - 0.5) < 1e-9
     assert prob_settle_yes(101, 100, 600, 0.0005) > 0.5
     assert prob_settle_yes(99, 100, 30, 0.0005, known_avg=103) > 0.5
+    assert prob_settle_yes_print(100, 100, 0, 0.0005) == 1.0 and prob_settle_yes_print(100, 100, 600, 0.0005) == 0.5
+    assert prob_settle_yes_print(100, 100, 600, 0.0005, tick=0.01) > 0.5
     print("ok")

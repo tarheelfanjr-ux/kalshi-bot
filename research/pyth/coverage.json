@@ -1,0 +1,46 @@
+{
+ "KXGOLD15M": {
+  "exploration_end_utc": "2026-09-18T06:45:00Z",
+  "valid_end_utc": "2026-10-06T11:30:00Z",
+  "test_end_utc": "2026-10-23T21:00:00Z",
+  "markets": {
+   "train": 2389,
+   "valid": 1196,
+   "test": 1197
+  },
+  "first_close_utc": "2026-08-16T23:30:00Z"
+ },
+ "KXSILVER15M": {
+  "exploration_end_utc": "2026-09-18T02:30:00Z",
+  "valid_end_utc": "2026-10-06T13:45:00Z",
+  "test_end_utc": "2026-10-23T21:00:00Z",
+  "markets": {
+   "train": 2372,
+   "valid": 1187,
+   "test": 1188
+  },
+  "first_close_utc": "2026-08-16T23:30:00Z"
+ },
+ "KXWTI15M": {
+  "exploration_end_utc": "2026-09-19T00:45:00Z",
+  "valid_end_utc": "2026-10-07T07:45:00Z",
+  "test_end_utc": "2026-10-23T23:00:00Z",
+  "markets": {
+   "train": 2461,
+   "valid": 1236,
+   "test": 1237
+  },
+  "first_close_utc": "2026-08-16T23:30:00Z"
+ },
+ "KXNATGAS15M": {
+  "exploration_end_utc": "2026-09-25T08:15:00Z",
+  "valid_end_utc": "2026-10-09T15:30:00Z",
+  "test_end_utc": "2026-10-23T23:00:00Z",
+  "markets": {
+   "train": 2031,
+   "valid": 1021,
+   "test": 1022
+  },
+  "first_close_utc": "2026-08-27T20:45:00Z"
+ }
+}

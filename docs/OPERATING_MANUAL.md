@@ -48,8 +48,9 @@ kbot collect --days 60 --trades  # the same, plus every public trade in those ma
 kbot verify-data                 # settlement rule, ticker times, gaps, quotes -> reports/data-verification.json
 kbot collect-spot --days 60      # Coinbase 1-minute prices, stored as proxy for each RTI index
 kbot import-spot file.csv --index BRTI   # optional: real index data you are licensed to use
-kbot collect-pyth --days 70      # Pyth 1-minute bars for the 13 Pyth-settled candidate series. Needs
-                                 # PYTH_API_KEY in .env. Prints how many open strikes match each offset
+kbot collect-pyth --days 70      # Pyth 1-minute bars for the 17 Pyth-settled series. Needs PYTH_API_KEY
+                                 # in .env and pyth.dourolabs.app reachable. Prints how many open strikes
+                                 # match each offset. A 403 means the key lacks that feed or channel.
 kbot research                    # writes reports/research-latest.json, holdout stays closed
 kbot backtest --strategy fair_value --split validation --slippage 0.02
 kbot research --open-holdout     # ONLY once a strategy passes validation; each opening is counted
