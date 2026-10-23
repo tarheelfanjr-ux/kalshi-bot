@@ -33,6 +33,7 @@ class FakeExchange:
 
     def __init__(self):
         self.orders, self.posts, self.cancels = {}, [], []
+        self.timeout_next = False       # accept the next order, then time out before answering
 
     def __call__(self, req):
         path = req.url.path.removeprefix("/trade-api/v2")
@@ -46,6 +47,9 @@ class FakeExchange:
                                 "remaining_count_fp": b["count"], "taker_fill_cost_dollars": "0.000000",
                                 "maker_fill_cost_dollars": "0.000000", "taker_fees_dollars": "0.000000",
                                 "maker_fees_dollars": "0.000000"}
+            if self.timeout_next:
+                self.timeout_next = False
+                raise httpx.ReadTimeout("slow", request=req)
             return httpx.Response(201, json={"order_id": oid, "client_order_id": b["client_order_id"],
                                              "fill_count": "0.00", "remaining_count": b["count"], "ts_ms": 1})
         if req.method == "DELETE":
@@ -160,6 +164,21 @@ async def test_requote_moves_an_unfilled_bid(db):
     await eng.quote(m, now + 60, True, "ok")
     assert ex.cancels == ["o1"] and [p["price"] for p in ex.posts] == ["0.2000", "0.2100"]
     assert [o["status"] for o in ex.orders.values()] == ["canceled", "resting"]
+
+
+async def test_create_timeout_is_never_resent_and_the_order_is_still_cancelled(db):
+    eng, ex, pub, m, books, now = await live_engine(db)
+    ex.timeout_next = True
+    books[T] = book(T, 0.20, 0.24, ts=now)
+    await eng.quote(m, now, True, "ok")
+    q = db.one("SELECT * FROM quotes WHERE side='yes'")
+    assert db.one("SELECT state FROM orders WHERE client_order_id=?", (q["client_order_id"],))["state"] == "unknown"
+    books[T] = book(T, 0.21, 0.24, ts=now + 60)
+    await eng.quote(m, now + 60, True, "ok")     # the unknown order blocks a new bid on this side
+    assert len(ex.posts) == 1 and "still working" in db.one("SELECT risk FROM quotes WHERE price=0.21")["risk"]
+    await eng.om.reconcile_orders()              # found by client order id: it was resting all along
+    await eng.cancel_ended(now + 61)
+    assert ex.orders["o1"]["status"] == "canceled" and len(ex.posts) == 1
 
 
 async def test_halt_and_estop_cancel_resting_bids_and_block_new_ones(db):

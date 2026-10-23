@@ -167,7 +167,8 @@ class MakerEngine:
         coid = await self.om.place(ticker=m.ticker, outcome_side=side, limit_price=price, count=d.count,
                                    post_only=True, expiration_ts=m.close_ts)
         state = self.db.one("SELECT state FROM orders WHERE client_order_id=?", (coid,))["state"]
-        return (coid, d.reason) if state == "resting" else (None, f"{self.mode} order {state}")
+        # An order whose create timed out may still be resting: keep it on the quote so it gets cancelled.
+        return (coid, d.reason) if state in OPEN_ORDER_STATES else (None, f"{self.mode} order {state}")
 
     async def quote(self, m: MarketInfo, now: float, healthy: bool, health_reason: str) -> None:
         sp = self.spec

@@ -9,7 +9,7 @@ profitable. A 90-day real-data backtest (2026-10-23) found no edge. See [docs/RE
 ## Quick start
 
 ```bash
-scripts/setup.sh                         # venv, dependencies, config files, 104 tests (no network needed)
+scripts/setup.sh                         # venv, dependencies, config files, 105 tests (no network needed)
 .venv/bin/python -m kbot discover        # list live 15-minute series and markets
 .venv/bin/python -m kbot collect --days 60          # settled markets + minute candles
 .venv/bin/python -m kbot verify-data                # audit settlement, timing, gaps
