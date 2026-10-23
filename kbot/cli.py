@@ -96,6 +96,13 @@ def cmd_research(s, a):
     print("full report: reports/research-latest.json")
 
 
+def cmd_audit(s, a):
+    from .audit import audit
+    rep = audit(_db(s), s, open_holdout=a.open_holdout)
+    print(json.dumps({k: rep[k] for k in ("label", "strategy", "markets", "split") if k in rep}, indent=2))
+    print("full report: reports/edge-audit.json")
+
+
 def cmd_backtest(s, a):
     from .backtest import Costs, chronological_split, metrics, run
     from .collector import load_markets, load_spot
@@ -224,6 +231,8 @@ def main(argv=None):
     c.add_argument("--index", required=True)
     sub.add_parser("verify-data", help="audit stored history: timing, settlement, gaps, quotes")
     c = sub.add_parser("research", help="strategy comparison report")
+    c.add_argument("--open-holdout", action="store_true")
+    c = sub.add_parser("audit", help="edge audit: backtest checks, failure mode, baselines, calibration")
     c.add_argument("--open-holdout", action="store_true")
     c = sub.add_parser("backtest")
     c.add_argument("--strategy", default="fair_value")
