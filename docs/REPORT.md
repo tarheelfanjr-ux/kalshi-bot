@@ -53,7 +53,7 @@ Oct 24 is unchanged. The maker bot runs in paper mode. Go/no-go and next steps: 
 | 7. Execution | State machine, durable intent, no resend on timeout, client order ids, reconciliation, partial fills, cancels, insufficient funds halt | Unit tests | Yes | Fee and cost fields on real responses unverified. |
 | 8. Risk | Central gate with every requested default; worst-case sizing; resting + partial orders counted; persistent daily ledger; review after loss streak | Unit tests incl. restart | Yes | none known |
 | 9. Operation | Async loop, graceful shutdown, health (freshness, API, clock, WS, reconcile age), integrity check, crash detection, backups, pause, e-stop | App tests incl. network failure | Yes | Long soak test not run. |
-| 10. Dashboard | Local read-only page with every requested panel, mode labels, token for non-local binding | Smoke tested; no-secrets test | Yes | none known |
+| 10. Dashboard | Web control center: every requested panel, mode labels, paper-only start, pause, resume, stop, e-stop, settings, backtests; token for non-local binding | `tests/test_web.py` (CSRF, origin, host, login, no secrets, controls); run against the live paper bot | Yes | Start/stop detection uses `ps` (macOS, Linux) |
 
 ## Results
 
@@ -88,7 +88,7 @@ Oct 24 is unchanged. The maker bot runs in paper mode. Go/no-go and next steps: 
 | Loss controls | Daily loss, loss streak, mismatch, insufficient funds, and e-stop all halt entries and require `kbot resume --reviewed`. Limits are never raised by code. |
 | Secrets | Keys only from env-specified files with mode 600. Config file rejects secret keys. Signer repr masks the key id. Dashboard output tested for leaks. `.gitignore` covers `.env`, keys, `data/`, `reports/`. |
 | Scope | No transfer, withdrawal, deposit, subaccount, or API-key endpoints are implemented. |
-| Dashboard | Read-only, localhost by default, token required for other bindings. No order controls. |
+| Dashboard | Localhost by default, token login required for other bindings, CSRF and origin checks on every control. Starts paper mode only and strips trading keys from the bot it starts. No way to arm production or place an order. |
 | LLM / ML | No model can authorize trades. Every order passes the deterministic risk gate. |
 | Known residual risks | Fill-cost field semantics on real V2 responses are inferred from docs; position reconciliation is the backstop. WS resubscribes by reconnecting when the market set changes (about every 15 minutes), leaving a brief gap the freshness check covers. |
 

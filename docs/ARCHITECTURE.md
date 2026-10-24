@@ -18,7 +18,7 @@
                                                      | SQLite  |  orders, fills, positions,
                                                      +----+----+  ledger, signals, events
                                                           |
-                                     dashboard.py, reports.py, cli.py (read / control)
+                       web.py + web/ (browser), cli.py -> control.py, dashboard.py, reports.py
 ```
 
 | Module | Responsibility |
@@ -41,7 +41,9 @@
 | `experiments.py` | Frozen specs and once-only scoring for prospective experiments E1 and E2. |
 | `app.py` | Long-running loop, health, settlement, reconciliation, snapshots for future research. |
 | `reports.py` | Per-mode performance, calibration, deterioration check, daily report. |
-| `dashboard.py` | Read-only local web page. |
+| `dashboard.py` | Bot state for `kbot status` and the web control center. No secrets. |
+| `control.py` | Pause, resume, emergency stop, bot state, start (paper only) and stop of the bot process. Shared by the CLI and the web. |
+| `web.py`, `web/` | Web control center: stdlib HTTP server, JSON API, login and CSRF, settings editor, backtest runner, single-page UI. See [WEB.md](WEB.md). |
 | `notify.py` | Log + optional webhook. |
 
 ## Order state machine

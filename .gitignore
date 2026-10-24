@@ -11,3 +11,6 @@ logs/
 *.key
 *.sqlite
 *.sqlite-*
+config.web.toml
+*.toml.bak
+*.toml.tmp

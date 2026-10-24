@@ -121,13 +121,15 @@ def _book_from_candle(ticker: str, c: Candle, depth: float, ts: float) -> OrderB
 def run(markets: list[MarketData], strategy_name: str, scfg: StrategyConfig, limits: RiskLimits,
         costs: Costs | None = None, spot: dict[str, list[tuple[float, float]]] | None = None,
         index_for_series: dict[str, str] | None = None, seed: int = 7,
-        side_override=None) -> Result:
-    """side_override(trade_index, rng) -> 'yes'|'no' turns a run into a random-direction benchmark."""
+        side_override=None, progress=None) -> Result:
+    """side_override(trade_index, rng) -> 'yes'|'no' turns a run into a random-direction benchmark.
+    progress(fraction_done) is called now and then, for the web page."""
     return asyncio.run(_run(markets, strategy_name, scfg, limits, costs or Costs(), spot or {},
-                            index_for_series or {}, seed, side_override))
+                            index_for_series or {}, seed, side_override, progress))
 
 
-async def _run(markets, strategy_name, scfg, limits, costs, spot, index_for_series, seed, side_override):
+async def _run(markets, strategy_name, scfg, limits, costs, spot, index_for_series, seed, side_override,
+               progress=None):
     rng = random.Random(seed)
     db = DB(":memory:")
     now = [0.0]
@@ -152,7 +154,9 @@ async def _run(markets, strategy_name, scfg, limits, costs, spot, index_for_seri
 
     open_trades: dict[str, Trade] = {}
     last_day = None
-    for ts, _, kind, md, i in events:
+    for done, (ts, _, kind, md, i) in enumerate(events):
+        if progress and done % 5000 == 0:
+            progress(done / len(events))
         now[0] = ts
         day = utc_day(ts)
         if day != last_day:

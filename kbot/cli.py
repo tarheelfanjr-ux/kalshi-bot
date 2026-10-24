@@ -213,45 +213,28 @@ def cmd_status(s, a):
 
 
 def cmd_pause(s, a):
-    db = _db(s)
-    db.set("pause", {"reason": a.reason, "ts": time.time()})
-    db.event("pause", reason=a.reason)
+    from .control import pause
+    pause(_db(s), a.reason)
     print("paused: no new entries. Open positions are still tracked and settled.")
 
 
 def cmd_resume(s, a):
-    from .risk import RiskManager
-    db = _db(s)
-    if db.get("estop") and not a.clear_estop:
-        sys.exit("emergency stop is engaged; pass --clear-estop after you have reviewed why")
-    if not a.reviewed:
-        sys.exit("pass --reviewed 'what you checked' to resume")
-    db.set("pause", None)
-    if a.clear_estop:
-        db.set("estop", None)
-        db.set("estop_handled", None)
-    RiskManager(db, s.risk, s.mode).clear(a.reviewed)
+    from .control import ControlError, resume
+    try:
+        resume(_db(s), s, a.reviewed, a.clear_estop)
+    except ControlError as e:
+        sys.exit(f"{e}. Flags: --reviewed 'what you checked', --clear-estop")
     print(f"resumed {s.mode}. Limits were not changed.")
 
 
 def cmd_estop(s, a):
     """Blocks all new orders at once (persisted). The running bot cancels open entry orders on its
     next tick. In demo/production this command also cancels them directly."""
-    db = _db(s)
-    db.set("estop", {"reason": a.reason, "ts": time.time()})
-    db.set("estop_handled", None)
-    db.event("estop", reason=a.reason)
+    from .control import estop
     print("EMERGENCY STOP set: no new orders.")
-    if s.mode in ("demo", "production") and s.api_key_id:
-        from .client import make_trading_client
-        from .execution import KalshiAdapter, OrderManager
-        from .notify import Notifier
-
-        async def go():
-            # cancel_only: this client can cancel but can never create an order.
-            om = OrderManager(db, KalshiAdapter(make_trading_client(s, cancel_only=True)), Notifier(db))
-            print("cancelled", await om.cancel_open_entries("estop command"), "open entry orders")
-        asyncio.run(go())
+    n = estop(_db(s), s, a.reason)
+    if n is not None:
+        print("cancelled", n, "open entry orders")
     print("Existing positions are NOT closed. They settle normally. Check them with: python -m kbot status")
 
 
@@ -284,8 +267,10 @@ def cmd_report(s, a):
 
 
 def cmd_dashboard(s, a):
-    from .dashboard import serve
-    serve(s.db_path, s, a.host or s.dashboard_host, a.port or s.dashboard_port)
+    import os
+    from .web import serve
+    serve(a.config or os.environ.get("KBOT_CONFIG", "config.toml"), s, a.host or s.dashboard_host,
+          a.port or s.dashboard_port, open_browser=a.open)
 
 
 def cmd_backup(s, a):
@@ -346,9 +331,10 @@ def main(argv=None):
     sub.add_parser("reconcile")
     sub.add_parser("check-auth")
     sub.add_parser("report")
-    c = sub.add_parser("dashboard")
+    c = sub.add_parser("dashboard", help="web control center, http://127.0.0.1:8765")
     c.add_argument("--host")
     c.add_argument("--port", type=int)
+    c.add_argument("--open", action="store_true", help="open it in the default browser")
     sub.add_parser("backup")
     a = p.parse_args(argv)
     _setup_logging(a.log_level)

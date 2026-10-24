@@ -2,6 +2,8 @@
 
 All commands run from the project folder. `kbot` below means `.venv/bin/python -m kbot`.
 
+To run the bot from a browser instead, use `scripts/web.sh` ([WEB.md](WEB.md)).
+
 ## 1. Install
 
 ```bash

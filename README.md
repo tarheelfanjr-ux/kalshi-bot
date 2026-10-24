@@ -8,6 +8,14 @@ profitable. A 90-day real-data backtest (2026-10-23) found no edge. See [docs/RE
 
 ## Quick start
 
+The easiest way in is the web control center ([docs/WEB.md](docs/WEB.md)):
+
+```bash
+scripts/web.sh    # sets up on first run, then opens http://127.0.0.1:8765 (paper trading only)
+```
+
+Everything else from the command line:
+
 ```bash
 scripts/setup.sh                         # venv, dependencies, config files, 105 tests (no network needed)
 .venv/bin/python -m kbot discover        # list live 15-minute series and markets
@@ -21,7 +29,7 @@ scripts/setup.sh                         # venv, dependencies, config files, 105
 .venv/bin/python -m kbot run             # continuous paper trading (default mode)
 .venv/bin/python -m kbot --config config.maker.toml run      # maker strategy, paper only
 .venv/bin/python -m kbot --config config.maker.toml status   # its comparison report
-.venv/bin/python -m kbot dashboard       # http://127.0.0.1:8765
+.venv/bin/python -m kbot dashboard       # web control center, http://127.0.0.1:8765
 ```
 
 ## Documents
@@ -31,6 +39,7 @@ scripts/setup.sh                         # venv, dependencies, config files, 105
 | [docs/RESEARCH.md](docs/RESEARCH.md) | Verified Kalshi API, fee, and market facts with sources |
 | [docs/PLAN.md](docs/PLAN.md) | Strategy design, test method, acceptance criteria |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Modules and data flow |
+| [docs/WEB.md](docs/WEB.md) | Web control center: launch, macOS setup, restart, security, hosting online |
 | [docs/OPERATING_MANUAL.md](docs/OPERATING_MANUAL.md) | Setup, credentials, every command, recovery |
 | [docs/LIVE_CHECKLIST.md](docs/LIVE_CHECKLIST.md) | Steps required before any real-money order |
 | [docs/GO_LIVE.md](docs/GO_LIVE.md) | Maker strategy: paper, then demo, then production, and who lifts each guard |
