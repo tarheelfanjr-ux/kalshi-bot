@@ -135,6 +135,16 @@ def test_service_owns_start_and_stop(s, no_service, monkeypatch):
         control.stop_process(db)
     control.pause(db, "still works")                     # pause and resume go through the database
     assert db.get("pause")
+    assert web.api_settings(db, s, "c.toml")["locked"] == str(no_service)
+
+
+def test_settings_read_only_under_a_service(server, no_service):
+    srv = server()
+    no_service.write_text("<plist/>")
+    csrf = call(srv, "GET", "/api/session")[1]["csrf"]
+    st, body, _ = call(srv, "POST", "/api/settings", {"values": {"risk.bankroll": 50}}, {"X-CSRF-Token": csrf})
+    assert st == 409 and "read-only" in body["error"]
+    assert config_mod.load(srv.config_path).risk.bankroll == 100.0
 
 
 # --- settings ---------------------------------------------------------------------------------------

@@ -576,8 +576,8 @@
       const input = (k) => { const f = F[k], v = isPct(k) ? +(f.value * 100).toFixed(4) : f.value; return html`<div class="field"><label for="f-${k}">${LABEL[f.key] || f.key}</label><input class="input" id="f-${k}" name="${k}" type="number" step="any" value="${v}" data-was="${v}">${f.range ? html`<span class="hint">${f.range[0]} to ${f.range[1]}</span>` : isPct(k) ? html`<span class="hint">above 0, at most 25</span>` : ''}</div>`; };
       const known = [...new Set([...c.known_series, ...F.series.value])].sort();
       const strat = F['strategy.name'].value;
-      $('#se-sub').textContent = `Saved to ${c.config}. The bot reads these when it starts, so stop and start it to apply a change.`;
-      $('#se-body').innerHTML = show(html`<form id="se-form" novalidate>
+      $('#se-sub').textContent = c.locked ? `Read-only. The paper bot runs as a background service (${c.locked}), and its settings are frozen for its test. See docs/HOSTING.md.` : `Saved to ${c.config}. The bot reads these when it starts, so stop and start it to apply a change.`;
+      $('#se-body').innerHTML = show(html`<form id="se-form" novalidate><fieldset ${c.locked ? 'disabled' : ''} style="border:0;padding:0;margin:0;min-width:0">
         <div class="set-row"><div><h2>Markets</h2><p>Which 15-minute series the bot reads and trades. None ticked means every series ending in 15M that it finds.</p></div>
           <div class="panel"><div class="chips" id="se-series">${known.map((x) => html`<label><input type="checkbox" value="${x}" ${F.series.value.includes(x) ? 'checked' : ''}>${x}</label>`)}</div>
           <div class="field" style="margin-top:14px;max-width:320px"><label for="se-add">Add a series</label><input class="input" id="se-add" placeholder="KXDOGE15M" autocomplete="off"><span class="hint">Ticker of a 15-minute series, ending in 15M.</span></div></div></div>
@@ -590,7 +590,7 @@
           <div class="panel"><div class="fields">${['max_data_age_s', 'max_clock_skew_s', 'loop_interval_s'].map(input)}</div></div></div>
         <div class="set-row"><div><h2>Fixed here</h2><p>Changed only in the config file or environment, never from this page.</p></div>
           <div class="panel"><dl class="kv"><div><dt>Mode</dt><dd>${c.mode}</dd></div><div><dt>Market data from</dt><dd>${c.data_env}</dd></div><div><dt>Database</dt><dd class="mono">${c.db_path}</dd></div><div><dt>Real-money trading</dt><dd>${c.production_trading === 'disabled' ? 'Disabled' : 'ARMED'}</dd></div><div><dt>API keys</dt><dd>Read by the bot from your .env file. Never sent to this page.</dd></div></dl></div></div>
-        <div class="form-foot"><span class="small" id="se-msg" role="status"></span><button class="btn primary" id="se-save">Save settings</button></div></form>`);
+        <div class="form-foot"><span class="small" id="se-msg" role="status"></span><button class="btn primary" id="se-save">Save settings</button></div></fieldset></form>`);
       const form = $('#se-form');
       const raised = () => $$('input[name^="risk."]', form).filter((i) => i.value !== '' && +i.value > +i.dataset.was).map((i) => LABEL[i.name.slice(5)]);
       form.addEventListener('input', () => { const r = raised(); $('#se-raise').textContent = r.length ? `Raising: ${r.join(', ')}. You will be asked to confirm.` : ''; });

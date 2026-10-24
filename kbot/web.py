@@ -31,7 +31,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from . import config as config_mod
 from .config import RiskLimits, Settings
-from .control import ControlError, bot_state, estop, pause, resume, start_paper, stop_process
+from .control import ControlError, bot_state, estop, pause, resume, service, start_paper, stop_process
 from .dashboard import state
 from .db import DB
 from .experiments import SERIES, SPECS
@@ -448,7 +448,8 @@ def api_settings(db: DB, s: Settings, config_path: str) -> dict:
     known = {r["series"] for r in db.q("SELECT DISTINCT series FROM markets WHERE series IS NOT NULL")}
     return {"config": config_path, "exists": Path(config_path).exists(), "mode": s.mode, "data_env": s.data_env,
             "db_path": s.db_path, "production_trading": "ARMED" if s.production_armed() else "disabled",
-            "fields": editable(s), "strategies": STRATEGIES, "known_series": sorted(known | set(SERIES))}
+            "fields": editable(s), "strategies": STRATEGIES, "known_series": sorted(known | set(SERIES)),
+            "locked": service()}
 
 
 def _toml(v) -> str:
@@ -724,6 +725,9 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as e:
                 return self._err(400, str(e))
         if path == "/api/settings":
+            if svc := service():    # a service-run bot is on a frozen test; the page must not change its config
+                return self._err(409, f"settings are read-only while the paper bot runs as a background service "
+                                      f"({svc}). See docs/HOSTING.md")
             try:
                 with srv.lock:
                     s2, changed = save_settings(srv.config_path, srv.s, body.get("values") or {},
