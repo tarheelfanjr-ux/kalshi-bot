@@ -22,6 +22,18 @@ def test_restart_logs_downtime_unclean_exit_and_the_settings_it_starts_with(tmp_
     assert ev["startup"]["limits"] == PAPER_TEST["risk_limits"] and ev["startup"]["paper_test"] == paper_test_hash()
 
 
+def test_a_second_bot_on_the_same_database_refuses_to_start(tmp_path):
+    import os
+    import pytest
+    app, pub, now = maker_app(tmp_path)
+    app.db.set("running", {"pid": os.getppid(), "mode": "paper"})     # a live process
+    app.db.set("heartbeat", time.time() - 5)
+    with pytest.raises(RuntimeError, match="another bot"):
+        app.startup_checks()
+    app.db.set("heartbeat", time.time() - 600)                         # stale: that pid is not a bot
+    app.startup_checks()
+
+
 def test_a_short_pause_is_not_an_interruption(tmp_path):
     db = DB(str(tmp_path / "r.sqlite"))
     assert db.interruption("recorder", "recorder_heartbeat") is None      # first start: nothing to compare

@@ -31,6 +31,16 @@ from .strategy import Candidate, Snapshot, make
 log = logging.getLogger(__name__)
 
 
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        pass
+    return True
+
+
 class App:
     def __init__(self, s: Settings, db: DB | None = None):
         if s.mode not in ("paper", "demo", "production"):
@@ -84,8 +94,12 @@ class App:
     def startup_checks(self) -> None:
         if not self.db.integrity_ok():
             raise RuntimeError("database integrity check failed; restore from data/backups")
-        self.db.interruption("bot", "heartbeat", self.s.mode)
         prev = self.db.get("running")
+        # Two bots on one database would double every paper order. A fresh heartbeat rules out a reused pid.
+        if (prev and prev.get("pid") not in (None, os.getpid()) and _alive(prev["pid"])
+                and time.time() - (self.db.get("heartbeat") or 0) < 60):
+            raise RuntimeError(f"another bot (pid {prev['pid']}) is running on {self.s.db_path}; stop it first")
+        self.db.interruption("bot", "heartbeat", self.s.mode)
         if prev and prev.get("pid"):
             self.db.event("unexpected_termination", self.s.mode, last_heartbeat=self.db.get("heartbeat"))
             self.notify(f"previous run (pid {prev['pid']}) did not shut down cleanly; reconciling before trading")

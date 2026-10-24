@@ -172,7 +172,9 @@ the halted hours. `experiment status` shows the recorder's restarts and its long
 - Look at `status` once a day.
 - A risk halt (5 losses in a row, or the daily loss limit) stays on until you clear it. Read why,
   then `python -m kbot --config config.maker.toml resume --reviewed "what I checked"`.
-- Do not edit `config.maker.toml` or pull new code. A change to the limits shows in `status` and
-  fails the test.
+- Do not edit `config.maker.toml`, save settings in the web page, or pull new code. A change to the
+  limits shows in `status` and fails the test.
+- Do not start a second copy by hand while the service runs. It refuses to start on the same
+  database, and the web page hides Start and Stop when the services are installed.
 - Keys stay out of chat and out of Git. Any key goes in `.env`, which Git ignores. Run
   `chmod 600 .env`. P1 itself needs no key.
