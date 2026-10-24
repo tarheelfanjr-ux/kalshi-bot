@@ -4,7 +4,7 @@ Sources (all real, nothing synthesized):
   * Kalshi settled markets for each 15M series (live + /historical endpoints)
   * Kalshi 1-minute candlesticks for each market (top-of-book bid/ask per minute)
   * Coinbase 1-minute candles as a *proxy* for the CF Benchmarks settlement index
-  * Pyth Benchmarks 1-minute bars, the settlement source of the metals, FX, Brent and yield series
+  * Pyth Pro 1-minute candles, the settlement source of the metals, energy, FX and yield series
   * Any CSV of (timestamp, price) the operator supplies, e.g. licensed index data
 """
 from __future__ import annotations
@@ -174,27 +174,37 @@ PYTH_SYMBOLS = {"KXCOPPER15M": "Commodities.Index.CU/USD", "KXPLATINUM15M": "Met
                 "KXUSDJPY15M": "FX.USD/JPY", "KXUSDCAD15M": "FX.USD/CAD", "KXAUDUSD15M": "FX.AUD/USD",
                 "KXBRENT15M": "Commodities.Index.BRENT/USD", "KX2YRRATE15M": "InterestRate.US2Y",
                 "KX5YRRATE15M": "InterestRate.US5Y", "KX10YRRATE15M": "InterestRate.US10Y",
-                "KX30YRRATE15M": "InterestRate.US30Y"}
+                "KX30YRRATE15M": "InterestRate.US30Y", "KXGOLD15M": "Metal.Index.1OZGOLD/USD",
+                "KXSILVER15M": "Metal.Index.SILVER/USD", "KXWTI15M": "Commodities.Index.PYTHOIL/USD",
+                "KXNATGAS15M": "Commodities.Index.NATGAS/USD"}
+PYTH_HISTORY = "https://pyth.dourolabs.app/v1"   # Pyth Pro History API, key required since 2026-08-26
 
 
 async def collect_pyth(db: DB, symbol: str, start: float, end: float, api_key: str | None = None,
-                       http: httpx.AsyncClient | None = None) -> int:
-    """Pyth Benchmarks 1-minute bars through its TradingView shim, stored in `spot` as "pyth:<symbol>"
-    at bar start + 60 s, the same convention as Coinbase. Never run against the real API from here
-    (host blocked): `pyth_strike_check` says whether that convention and the symbol are right."""
+                       http: httpx.AsyncClient | None = None, channel: str = "fixed_rate@200ms") -> int:
+    """Pyth Pro 1-minute candles from the History API, stored in `spot` as "pyth:<symbol>" at bar start
+    + 60 s, the same convention as Coinbase. The key goes only in the Authorization header, never in a
+    URL, message or log. `pyth_strike_check` says whether that convention and the symbol are right."""
+    if not api_key:
+        raise ValueError("Pyth history needs PYTH_API_KEY in the environment (free key from the Pyth Terminal)")
     http = http or httpx.AsyncClient(timeout=20)
-    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    headers = {"Authorization": f"Bearer {api_key}"}
     n, t = 0, int(start)
     while t < end:
         t2 = int(min(end, t + 86400))
         for attempt in range(6):
-            r = await http.get("https://benchmarks.pyth.network/v1/shims/tradingview/history", headers=headers,
+            r = await http.get(f"{PYTH_HISTORY}/{channel}/history", headers=headers,
                                params={"symbol": symbol, "resolution": "1", "from": t, "to": t2})
             if r.status_code != 429:
                 break
             await asyncio.sleep(2 ** attempt)
+        if r.status_code in (401, 403):
+            raise PermissionError(f"Pyth refused {symbol} on {channel} (HTTP {r.status_code}): key missing, expired "
+                                  "or not entitled to this feed or channel. Try --channel fixed_rate@1000ms.")
         r.raise_for_status()
         bars = r.json()
+        if bars.get("s") == "error":
+            raise ValueError(f"Pyth history error for {symbol}: {bars.get('errmsg')}")
         if bars.get("s") == "ok":
             with db.tx():
                 for bt, close in zip(bars["t"], bars["c"]):
@@ -202,7 +212,7 @@ async def collect_pyth(db: DB, symbol: str, start: float, end: float, api_key: s
                          (f"pyth:{symbol}", float(bt) + 60, float(close)))
                     n += 1
         t = t2
-        await asyncio.sleep(0.2)   # the shim allows 90 requests per 10 s
+        await asyncio.sleep(0.2)   # shortcut: Pyth publishes no History API rate limit; back off on 429 only
     return n
 
 

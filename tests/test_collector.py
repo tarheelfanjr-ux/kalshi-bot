@@ -1,4 +1,5 @@
 """Collector and data audit on hand-made API responses (not real Kalshi data)."""
+import pytest
 from conftest import iso
 
 from kbot.collector import collect_history, load_markets, verify_history
@@ -126,7 +127,20 @@ async def test_pyth_bars_are_stored_at_bar_end_and_checked_against_strikes(tmp_p
     async with httpx.AsyncClient(transport=httpx.MockTransport(pyth)) as http:
         assert await collect_pyth(db, "FX.EUR/USD", T1 - 60, T1 + 60, api_key="k", http=http) == 2
     assert seen[0].headers["authorization"] == "Bearer k" and seen[0].url.params["resolution"] == "1"
+    assert seen[0].url.path == "/v1/fixed_rate@200ms/history" and "k" not in str(seen[0].url.params.values())
     assert [r["ts"] for r in db.q("SELECT ts FROM spot WHERE index_id='pyth:FX.EUR/USD' ORDER BY ts")] == [T1, T1 + 60]
     db.x("INSERT INTO markets(ticker,series,open_ts,close_ts,floor_strike) VALUES('E','KXEURUSD15M',?,?,1.16)",
          (T1, T1 + 900))
     assert pyth_strike_check(db, "KXEURUSD15M") == {"offset +0 s": 1.0, "offset -60 s": None, "offset +60 s": 0.0}
+
+
+async def test_pyth_needs_a_key_and_names_a_refusal_without_leaking_it(tmp_path):
+    import httpx
+    from kbot.collector import collect_pyth
+    db = DB(str(tmp_path / "p.sqlite"))
+    with pytest.raises(ValueError, match="PYTH_API_KEY"):
+        await collect_pyth(db, "FX.EUR/USD", T1, T1 + 60)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda req: httpx.Response(403))) as http:
+        with pytest.raises(PermissionError) as e:
+            await collect_pyth(db, "Metal.Index.1OZGOLD/USD", T1, T1 + 60, api_key="secret-key", http=http)
+    assert "403" in str(e.value) and "secret-key" not in str(e.value)

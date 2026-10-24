@@ -1,0 +1,24 @@
+{
+ "frozen_utc": "2026-10-23T23:10:00Z",
+ "data": "candidates-history.sqlite markets + full minute candles re-downloaded 2026-10-23 (trade price low/high per minute)",
+ "periods": "per series: train = close <= exploration_end_utc (candidates-coverage-2026-10-23.json); the rest split in half by count: valid (earlier), test (later)",
+ "read_before_freeze": "train: everything. valid/test: liquidity stats only (no outcomes), plus one test market (KXEURUSD15M-26OCT231515-30) printed while checking the candle format",
+ "common": {"contracts": 1, "hold": "to settlement", "quote_ok": "0 < bid < ask < 1 at the decision minute close",
+            "decision": "candle close at minute k0 after open", "favorite_band": [0.60, 0.90]},
+ "taker": {"price": "ask (YES) or 1-bid (NO) at k0 close + 0.01 slippage", "fee": "ceil to cent of 0.07*p*(1-p), 1-contract order",
+           "stress": "quote at k0+1 close (60 s later) + 0.01"},
+ "maker": {"fee": "0 (fee_type quadratic)", "rest_until": "end of minute 14", "join_fill": "a later trade strictly through our price",
+           "improve": "best bid + 0.01 when spread >= 0.02", "improve_fill": "a later trade at or through our price",
+           "stress": ["improve variant needs a trade strictly through", "maker fee ceil-cent 0.0175*p*(1-p)", "fills only from minute k0+2"]},
+ "strategies": {
+   "T1": "coin-flip side, taker, k0=1, seed 7",
+   "T2": "YES taker at k0=1 (ties resolve YES)",
+   "T3": "favorite taker at k0=5",
+   "M2": "join best bid on both sides at k0=1, bids 0.05-0.95",
+   "M1": "join favorite's best bid at k0=5",
+   "M3": "improve favorite's best bid by 1c at k0=3 (PRIMARY)",
+   "M3b": "same at k0=5", "M3c": "same at k0=8"},
+ "primary": {"strategy": "M3", "series": ["KXCOPPER15M", "KXPLATINUM15M", "KXPALLADIUM15M"],
+   "pass": "valid mean per fill > 0; test mean per fill > 0 with 95% cluster-bootstrap CI (clusters = close time) above 0; test mean > 0 under each stress; at least 2 of 3 metal series positive on test"},
+ "train_disclosure": "on train, M3 was tried at k0 = 3, 5, 8 (metals +2.7, +0.6, +1.3 c/fill); k0=3 picked as best. M1 tried at k0 1,3,5,8,10, M2 at 1,5. Taker rules tried across k and bands; all lost."
+}

@@ -21,6 +21,7 @@ from .discovery import Discovery, eligible
 from .execution import KalshiAdapter, OrderManager, PaperAdapter
 from .experiments import SERIES
 from .feed import UNDERLYING, CoinbaseSpot, RestBookPoller, SpotStore, WsFeed
+from .gold import TOKEN
 from .maker import SHADOW_REASON, MakerEngine
 from .model import realized_sigma
 from .notify import Notifier
@@ -37,6 +38,9 @@ class App:
         maker = s.strategy.name == "maker"
         if maker and s.mode != "paper":
             raise ValueError("the maker strategy runs in paper mode only. Only its owner lifts this (docs/GO_LIVE.md).")
+        gold = s.strategy.name == "gold_token"
+        if gold and s.mode != "paper":
+            raise ValueError("gold_token is a paper research test and never runs in demo or production")
         self.s = s
         self.db = db or DB(s.db_path)
         self.notify = Notifier(self.db, s.notify_webhook)
@@ -74,6 +78,7 @@ class App:
                              on_lifecycle=self._on_lifecycle)
         self.poller = RestBookPoller(self.public, self.books)
         self.coinbase = None if self.ws else CoinbaseSpot(self.spot)
+        self.token = CoinbaseSpot(self.spot, products={k: (p, p) for k, p in TOKEN.items()}) if gold else None
         self.health_reason = "starting"
         self.unhealthy_since: float | None = time.time()
         self._stop = asyncio.Event()
@@ -195,6 +200,8 @@ class App:
         else:
             await self.poller.poll(active)
             await self.coinbase.poll(sorted({m.series for m in markets.values()}))
+        if self.token:      # always, so the hour of history the rule needs is there when markets open
+            await self.token.poll(list(TOKEN))
         if self.s.mode != "paper" and self._every("reconcile", 30):
             await self.reconcile()
         healthy, reason = self.check_health(active)
@@ -245,6 +252,8 @@ class App:
                 snap.sigma = realized_sigma(self.spot.points(idx), self.s.strategy.vol_lookback_s, now=now)
                 if m.seconds_left(now) <= 60 and idx in self.spot.avg60:
                     snap.known_avg = self.spot.avg60[idx][1]
+        if self.token and m.series in TOKEN:
+            snap.spot_points = self.spot.points(TOKEN[m.series])
         cand = self.strategy.evaluate(snap)
         if self.maker:      # shadow benchmark: log the first fair_value signal per market, never trade it
             if isinstance(cand, Candidate) and m.ticker not in self._shadowed:

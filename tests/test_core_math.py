@@ -77,6 +77,16 @@ def test_averaging_window_reduces_variance_vs_point_price():
     assert q > point
 
 
+def test_single_print_model_for_pyth_series():
+    import math
+    from kbot.model import norm_cdf, prob_settle_yes_print
+    assert prob_settle_yes_print(100.05, 100, 61, 3e-4) == pytest.approx(norm_cdf(math.log(100.05 / 100) / (3e-4 * math.sqrt(61))))
+    # a stale feed (no move left) settles on today's print, and a tie resolves YES
+    assert prob_settle_yes_print(100, 100, 0, 3e-4) == 1.0 and prob_settle_yes_print(99.99, 100, 0, 3e-4) == 0.0
+    # rounding to a cent: 99.996 rounds to 100.00 = strike, so YES
+    assert prob_settle_yes_print(99.996, 100, 0, 3e-4, tick=0.01) == 1.0
+
+
 def test_realized_sigma_and_uncertainty():
     pts = [(i, 100 * (1.0001 if i % 2 else 1.0)) for i in range(100)]
     s = realized_sigma(pts, 1000)
