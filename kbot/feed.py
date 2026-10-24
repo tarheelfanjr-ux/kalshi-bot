@@ -85,14 +85,15 @@ class RestBookPoller:
 class CoinbaseSpot:
     URL = "https://api.exchange.coinbase.com/products/{}/ticker"
 
-    def __init__(self, spot: SpotStore, http: httpx.AsyncClient | None = None):
-        self.spot, self.http = spot, http or httpx.AsyncClient(timeout=5)
+    def __init__(self, spot: SpotStore, http: httpx.AsyncClient | None = None,
+                 products: dict[str, tuple[str, str]] = UNDERLYING):
+        self.spot, self.http, self.products = spot, http or httpx.AsyncClient(timeout=5), products
 
     async def poll(self, series: list[str]) -> None:
         for s in series:
-            if s not in UNDERLYING:
+            if s not in self.products:
                 continue
-            index_id, product = UNDERLYING[s]
+            index_id, product = self.products[s]
             try:
                 r = await self.http.get(self.URL.format(product))
                 r.raise_for_status()

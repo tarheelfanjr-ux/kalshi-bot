@@ -27,6 +27,7 @@ class Snapshot:
     sigma: float | None = None            # per sqrt(second)
     known_avg: float | None = None        # partial 60 s average, inside the final minute
     mid_history: list[tuple[float, float]] = field(default_factory=list)   # (ts, yes mid)
+    spot_points: list[tuple[float, float]] = field(default_factory=list)   # stand-in price ticks (gold_token)
 
 
 @dataclass
@@ -218,7 +219,9 @@ class MarketImplied:
 
 
 def make(name: str, cfg: StrategyConfig) -> Strategy:
+    from .gold import GoldToken
     return {
+        "gold_token": lambda: GoldToken(cfg),
         "no_trade": lambda: NoTrade(cfg),
         "fair_value": lambda: FairValue(cfg),
         "momentum": lambda: MidMove(cfg, +1),
