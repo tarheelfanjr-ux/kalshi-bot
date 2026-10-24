@@ -131,7 +131,7 @@
   // the screen's one primary action, chosen from the bot's state
   function primaryAction(b) {
     if (b.estop) return html`<a class="btn danger" href="#/controls">Review emergency stop</a>`;
-    if (b.state === 'stopped') return html`<button class="btn primary" data-act="start">Start paper bot</button>`;
+    if (b.state === 'stopped' && !b.service) return html`<button class="btn primary" data-act="start">Start paper bot</button>`;
     if (b.state === 'paused') return html`<button class="btn primary" data-act="resume">Resume</button>`;
     if (b.state === 'running') return html`<button class="btn" data-act="pause">Pause entries</button>`;
     if (b.state === 'disconnected') return html`<a class="btn" href="#/controls">Check health</a>`;
@@ -534,10 +534,10 @@
       $('#ct-proc').innerHTML = show(html`
         <dl class="kv"><div><dt>State</dt><dd>${statePill(b)}</dd></div><div><dt>Process</dt><dd class="num">${b.pid ? `pid ${b.pid}` : '–'}</dd></div><div><dt>Started</dt><dd>${b.started && !stopped ? when(b.started) : '–'}</dd></div><div><dt>Strategy</dt><dd class="mono">${st.strategy}</dd></div><div><dt>Entries</dt><dd>${b.estop ? 'blocked by the emergency stop' : b.pause ? `paused: ${b.pause.reason}` : b.halted ? 'halted by a risk limit' : stopped ? '–' : 'allowed'}</dd></div></dl>
         <div class="btn-row" style="margin-top:auto">
-          ${stopped ? html`<button class="btn primary" data-act="start">Start paper bot</button>` : html`<button class="btn danger" data-act="stop" ${starting ? 'disabled' : ''}>Stop</button>`}
+          ${b.service ? '' : stopped ? html`<button class="btn primary" data-act="start">Start paper bot</button>` : html`<button class="btn danger" data-act="stop" ${starting ? 'disabled' : ''}>Stop</button>`}
           ${b.pause || (b.halted && !b.estop) ? html`<button class="btn" data-act="resume">Resume</button>` : html`<button class="btn" data-act="pause">Pause entries</button>`}
         </div>
-        <p class="faint small">Pause blocks new entries and keeps tracking open positions. Stop ends the process; positions settle on Kalshi's schedule either way. Pause works while stopped too and holds on the next start.</p>`);
+        <p class="faint small">${b.service ? html`The bot runs as a background service (<span class="mono">${b.service}</span>), which starts it and restarts it if it exits, so Start and Stop are not offered here. Start or stop the service as docs/HOSTING.md shows. ` : ''}Pause blocks new entries and keeps tracking open positions. ${b.service ? '' : 'Stop ends the process; positions settle on Kalshi\'s schedule either way. '}Pause works while stopped too and holds on the next start.</p>`);
       $('#ct-estop').innerHTML = show(b.estop ? html`
         <div class="notice neg" style="margin:0;display:block"><b>Engaged ${when(b.estop.ts)}.</b> ${b.estop.reason}</div>
         <p class="muted">No new orders of any kind until it is cleared. Open positions are not closed; they settle normally.</p>

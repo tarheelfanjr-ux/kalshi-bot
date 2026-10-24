@@ -72,7 +72,23 @@ def _is_kbot(pid: int) -> bool:
     except PermissionError:
         return False
     out = subprocess.run(["ps", "-p", str(pid), "-o", "command="], capture_output=True, text=True).stdout
-    return "kbot" in out
+    return "kbot" in out and out.rstrip().endswith(" run")     # not the recorder or the website
+
+
+# Service files docs/HOSTING.md installs. The service manager restarts the bot whenever it exits.
+SERVICE_FILES = (Path.home() / "Library/LaunchAgents/com.kbot.paper.plist",
+                 Path.home() / ".config/systemd/user/kbot-paper.service")
+
+
+def service() -> str | None:
+    """Path of the installed service that keeps the paper bot running, if there is one."""
+    return next((str(p) for p in SERVICE_FILES if p.exists()), None)
+
+
+def _no_service(action: str) -> None:
+    if svc := service():
+        raise ControlError(f"the paper bot runs as a background service ({svc}), which {action}. Use Pause and "
+                           "Resume here, or start and stop the service as docs/HOSTING.md shows")
 
 
 def bot_state(db: DB, s: Settings, now: float | None = None) -> dict:
@@ -96,7 +112,7 @@ def bot_state(db: DB, s: Settings, now: float | None = None) -> dict:
         state, detail = "running", "trading loop healthy"
     return {"state": state, "detail": detail, "pid": pid if state != "stopped" else None,
             "started": running.get("started"), "heartbeat_age_s": round(hb_age, 1), "health": health,
-            "estop": db.get("estop"), "pause": db.get("pause"), "halted": halted}
+            "estop": db.get("estop"), "pause": db.get("pause"), "halted": halted, "service": service()}
 
 
 def start_paper(config_path: str | None, s: Settings, log_path: str = "logs/web-bot.log") -> subprocess.Popen:
@@ -105,6 +121,7 @@ def start_paper(config_path: str | None, s: Settings, log_path: str = "logs/web-
     if s.mode != "paper":
         raise ControlError(f"this config is in {s.mode} mode. The web page starts paper mode only; "
                            "anything else goes through the CLI and docs/GO_LIVE.md.")
+    _no_service("starts it itself; a second copy would write to the same database")
     env = {k: v for k, v in os.environ.items()
            if not (k.startswith(("KBOT_DEMO_", "KBOT_PROD_", "KBOT_PRODUCTION")) and not k.startswith("KBOT_PROD_READONLY_"))}
     env["KBOT_MODE"] = "paper"
@@ -117,6 +134,7 @@ def start_paper(config_path: str | None, s: Settings, log_path: str = "logs/web-
 
 def stop_process(db: DB) -> int:
     """SIGTERM the running bot. It cancels resting paper bids and leaves positions to settle."""
+    _no_service("would restart it within a minute")
     pid = (db.get("running") or {}).get("pid")
     if not pid or not _is_kbot(pid):
         raise ControlError("no running bot process found on this computer")

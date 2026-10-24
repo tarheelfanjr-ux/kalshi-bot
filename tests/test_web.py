@@ -26,6 +26,13 @@ name = "fair_value"
 """
 
 
+@pytest.fixture(autouse=True)
+def no_service(tmp_path, monkeypatch):
+    """No launchd or systemd service on the test machine, whatever the real home folder holds."""
+    monkeypatch.setattr(control, "SERVICE_FILES", (tmp_path / "com.kbot.paper.plist",))
+    return tmp_path / "com.kbot.paper.plist"
+
+
 @pytest.fixture
 def cfg(tmp_path):
     p = tmp_path / "config.toml"
@@ -112,6 +119,22 @@ def test_start_paper_strips_trading_keys(s, monkeypatch, tmp_path):
     s.mode = "demo"
     with pytest.raises(control.ControlError):
         control.start_paper("c.toml", s)
+
+
+def test_service_owns_start_and_stop(s, no_service, monkeypatch):
+    no_service.write_text("<plist/>")
+    db = DB(s.db_path)
+    assert control.bot_state(db, s)["service"] == str(no_service)
+    monkeypatch.setattr(control.subprocess, "Popen", lambda *a, **kw: pytest.fail("started a second copy"))
+    with pytest.raises(control.ControlError, match="background service"):
+        control.start_paper("c.toml", s)
+    db.set("running", {"pid": 4242, "mode": "paper"})
+    monkeypatch.setattr(control, "_is_kbot", lambda pid: True)
+    monkeypatch.setattr(control.os, "kill", lambda *a: pytest.fail("signalled a service-run bot"))
+    with pytest.raises(control.ControlError, match="background service"):
+        control.stop_process(db)
+    control.pause(db, "still works")                     # pause and resume go through the database
+    assert db.get("pause")
 
 
 # --- settings ---------------------------------------------------------------------------------------
