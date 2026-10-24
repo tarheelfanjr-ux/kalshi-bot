@@ -12,6 +12,7 @@ import logging
 import os
 import signal
 import time
+from dataclasses import asdict
 
 from .book import OrderBook
 from .client import AccountClient, make_public_client, make_signer, make_trading_client
@@ -21,7 +22,7 @@ from .discovery import Discovery, eligible
 from .execution import KalshiAdapter, OrderManager, PaperAdapter
 from .experiments import SERIES
 from .feed import UNDERLYING, CoinbaseSpot, RestBookPoller, SpotStore, WsFeed
-from .maker import SHADOW_REASON, MakerEngine
+from .maker import SHADOW_REASON, MakerEngine, paper_test_hash
 from .model import realized_sigma
 from .notify import Notifier
 from .risk import RiskManager
@@ -83,13 +84,15 @@ class App:
     def startup_checks(self) -> None:
         if not self.db.integrity_ok():
             raise RuntimeError("database integrity check failed; restore from data/backups")
+        self.db.interruption("bot", "heartbeat", self.s.mode)
         prev = self.db.get("running")
         if prev and prev.get("pid"):
             self.db.event("unexpected_termination", self.s.mode, last_heartbeat=self.db.get("heartbeat"))
             self.notify(f"previous run (pid {prev['pid']}) did not shut down cleanly; reconciling before trading")
         self.db.set("running", {"pid": os.getpid(), "mode": self.s.mode, "started": time.time()})
         self.db.event("startup", self.s.mode, strategy=self.s.strategy.name, bankroll=self.s.risk.bankroll,
-                      production_armed=self.s.production_armed())
+                      production_armed=self.s.production_armed(), limits=asdict(self.s.risk),
+                      **({"paper_test": paper_test_hash()} if self.maker else {}))
 
     async def run(self) -> None:
         self.startup_checks()

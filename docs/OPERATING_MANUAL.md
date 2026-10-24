@@ -115,6 +115,8 @@ WantedBy=default.target
 ```
 
 `systemctl --user enable --now kbot-paper`. On macOS use a launchd plist with the same command.
+For the maker bot and the recorder, ready-made services for both systems are in `scripts/`, with
+setup and restart steps in [HOSTING.md](HOSTING.md).
 
 ### Maker strategy (paper only)
 
@@ -151,6 +153,18 @@ gross and net, with 95% CIs that resample whole settlement windows.
 
 The short test is a check that the bot works and a rough read. It is not E2's frozen evaluation.
 Changing the rule because of what it shows makes E2 invalid. Read `status`, not single trades.
+
+**P1, the frozen 14-day test.** `status` prints a P1 block: its state ("collecting: day X of 14",
+VOID, PASS or FAIL), start and end, the executable account result, the research-only result, the
+data gaps, restarts and halted hours, and each pass check. The rules are in
+[EXPERIMENTS.md](EXPERIMENTS.md#p1-the-14-day-paper-test-of-the-maker-bot-frozen-2026-10-23). Start it
+on a fresh `data/paper-maker.sqlite` and do not change the config while it runs.
+
+**Restarts.** Each start logs an `interruption` event with the downtime since the last heartbeat,
+and `unexpected_termination` after an unclean exit. The bot re-reads the trade tape back to its
+oldest open quote, so fills during downtime count, and cancels quotes that expired. Its first order
+after a restart can be rejected for a stale book while the tape catches up. The recorder logs its
+own interruptions, shown in `kbot experiment status`.
 
 `kbot maker-history --db <copy with markets and candles>` runs the same rule on a seeded sample of
 markets that closed before the audit holdout (Oct 5, 14:15 UTC), downloading their public trades.

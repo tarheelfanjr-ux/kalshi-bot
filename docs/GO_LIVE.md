@@ -48,10 +48,12 @@ Read these lines in `status`:
 The bot halts itself on the daily loss limit (2%), 5 losses in a row, or stale data. That is the
 design. Check the reason in `status`, then `kbot ... resume --reviewed "what I checked"`.
 
-Exit criteria for stage 1, set on 2026-10-23 before the data came in (do not move them after a look):
-14 days with no gap over 2 hours, 300+ settled research-log fills across 100+ windows, research-log
-net per contract with a 95% CI above zero, its mean still above zero with a 0.0175 maker fee, and
-50+ settled paper-account trades.
+Exit criteria for stage 1: test P1 in [EXPERIMENTS.md](EXPERIMENTS.md#p1-the-14-day-paper-test-of-the-maker-bot-frozen-2026-10-23)
+passes. It keeps the bars set on 2026-10-23 (14 days with no gap over 2 hours, 300+ research-log
+fills across 100+ windows with a 95% CI above zero, still positive at a 0.0175 maker fee, 50+
+paper-account trades) and adds that the paper account itself, at the $25 limits, has a 95% CI above
+zero. `status` shows P1's state and each check. Start P1 on a fresh database on the machine that
+will run all 14 days ([HOSTING.md](HOSTING.md)).
 
 ## Stage 2: demo (fake money, needs your decision)
 

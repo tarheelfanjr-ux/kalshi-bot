@@ -9,7 +9,7 @@ profitable. A 90-day real-data backtest (2026-10-23) found no edge. See [docs/RE
 ## Quick start
 
 ```bash
-scripts/setup.sh                         # venv, dependencies, config files, 105 tests (no network needed)
+scripts/setup.sh                         # venv, dependencies, config files, 114 tests (no network needed)
 .venv/bin/python -m kbot discover        # list live 15-minute series and markets
 .venv/bin/python -m kbot collect --days 60          # settled markets + minute candles
 .venv/bin/python -m kbot verify-data                # audit settlement, timing, gaps
@@ -35,7 +35,8 @@ scripts/setup.sh                         # venv, dependencies, config files, 105
 | [docs/LIVE_CHECKLIST.md](docs/LIVE_CHECKLIST.md) | Steps required before any real-money order |
 | [docs/GO_LIVE.md](docs/GO_LIVE.md) | Maker strategy: paper, then demo, then production, and who lifts each guard |
 | [docs/REPORT.md](docs/REPORT.md) | Status, results, audit, limitations |
-| [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) | Prospective experiments E1 and E2 after the audit |
+| [docs/EXPERIMENTS.md](docs/EXPERIMENTS.md) | Prospective experiments E1 and E2, and P1, the frozen 14-day paper test |
+| [docs/HOSTING.md](docs/HOSTING.md) | Keeping the paper bot and recorder running 14 days: Mac or a $6 server, restarts |
 
 ## Result categories
 

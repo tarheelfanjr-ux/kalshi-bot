@@ -128,6 +128,17 @@ class DB:
                (key, json.dumps(value), time.time()))
 
     # --- audit log -------------------------------------------------------
+    def interruption(self, component: str, heartbeat_key: str, mode: str | None = None,
+                     min_gap_s: float = 30) -> float | None:
+        """At startup: log how long `component` was down, measured from its last heartbeat."""
+        hb = self.get(heartbeat_key)
+        if hb is None:
+            return None
+        gap = time.time() - hb
+        if gap >= min_gap_s:
+            self.event("interruption", mode, component=component, down_from=hb, down_s=round(gap, 1))
+        return gap
+
     def event(self, kind: str, mode: str | None = None, ticker: str | None = None, **data) -> None:
         self.x("INSERT INTO events(ts,mode,kind,ticker,data) VALUES(?,?,?,?,?)",
                (time.time(), mode, kind, ticker, json.dumps(data, default=str)))
