@@ -54,7 +54,9 @@ class Recorder:
         self.public = public or make_public_client(s, read_tokens_per_s=10)
         self.slow = slow or make_public_client(s, read_tokens_per_s=15, max_retries=8)
         self.http = http or httpx.AsyncClient(timeout=5)
-        self.discovery = Discovery(self.public, db, list(RECORD_SERIES))
+        # Discovery and fee checks page through 17 series, so they use the slow budget and run in the
+        # background. On the book budget they stalled snapshots for 20 to 50 s at a time.
+        self.discovery = Discovery(self.slow, db, list(RECORD_SERIES))
         self.books: dict[str, OrderBook] = {}
         self.ws = None
         if s.data_key_id and s.data_private_key_path:
@@ -78,8 +80,10 @@ class Recorder:
                 loop.add_signal_handler(sig, self._stop.set)
             except NotImplementedError:  # Windows
                 pass
+        self.db.interruption("recorder", "recorder_heartbeat")
         self.db.event("recorder_start", rti=bool(self.ws), book_every_s=self.book_every_s)
-        tasks = [asyncio.create_task(self._backfill_loop())]
+        self.db.set("recorder_heartbeat", time.time())     # a crash before the first tick still shows as downtime
+        tasks = [asyncio.create_task(self._backfill_loop()), asyncio.create_task(self._discovery_loop())]
         if self.ws:
             tasks.append(asyncio.create_task(self.ws.run()))
         try:
@@ -101,8 +105,6 @@ class Recorder:
             self.db.event("recorder_stop")
 
     async def tick(self, now: float) -> None:
-        if self._every("discovery", 20, now):   # /markets is cached 15 s; new windows show up within ~35 s
-            await self.discovery.refresh()
         markets = [m for m in self.discovery.markets.values() if m.open_ts <= now < m.close_ts]
         if self._every("books", self.book_every_s - 0.5, now):   # ticks land on whole seconds, give or take
             if self.ws:
@@ -120,8 +122,6 @@ class Recorder:
         if self._every("health", 60, now):
             self.db.event("recorder_health", clock_skew_s=self.public.clock_skew_s,
                           ws=bool(self.ws and self.ws.connected), markets=len(markets))
-        if self._every("fees", 3600, now):
-            await self.log_fees()
         self.db.set("recorder_heartbeat", now)
 
     def snapshot(self, m: MarketInfo, now: float) -> None:
@@ -170,11 +170,25 @@ class Recorder:
 
     async def log_fees(self) -> None:
         """E2 and the candidates assume a zero maker fee, so any change to the fee type is recorded hourly."""
-        series = {s: await self.public.series(s) or {} for s in RECORD_SERIES}
-        overrides = [o async for o in self.public.paginate("/events/fee_changes", "event_fee_changes")
+        series = {s: await self.slow.series(s) or {} for s in RECORD_SERIES}
+        overrides = [o async for o in self.slow.paginate("/events/fee_changes", "event_fee_changes")
                      if o.get("series_ticker") in RECORD_SERIES]
         self.db.event("fee_state", series={s: [m.get("fee_type"), m.get("fee_multiplier")] for s, m in series.items()},
                       scheduled=await self.public.fee_changes(), event_overrides=overrides)
+
+    async def _discovery_loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                await self.discovery.refresh()      # /markets is cached 15 s; new windows show up within ~35 s
+                if self._every("fees", 3600, time.time()):
+                    await self.log_fees()
+            except Exception as e:
+                log.exception("discovery failed")
+                self.db.event("recorder_error", error=f"discovery: {e!r}"[:300])
+            try:
+                await asyncio.wait_for(self._stop.wait(), timeout=20)
+            except asyncio.TimeoutError:
+                pass
 
     async def _backfill_loop(self) -> None:
         while not self._stop.is_set():

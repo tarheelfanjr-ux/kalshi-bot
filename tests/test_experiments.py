@@ -210,6 +210,8 @@ async def test_recorder_writes_books_coinbase_and_rti_ticks_with_receive_time(se
         200, json={"price": "81000.5", "time": "2026-10-23T18:00:48.765257257Z"})))
     db = DB(":memory:")
     rec = Recorder(settings, db, public=pub, slow=pub, http=cb)
+    await rec.discovery.refresh()
+    await rec.log_fees()
     await rec.tick(now)
     await rec.tick(now + 2)                     # unchanged book inside 10 s: not written again
     snaps = db.q("SELECT ticker, yes_bid, yes_ask, yes_bid_size, yes_ask_size FROM snapshots")
@@ -226,6 +228,22 @@ async def test_recorder_writes_books_coinbase_and_rti_ticks_with_receive_time(se
     assert db.one("SELECT 1 FROM events WHERE kind='fee_state'") is not None
 
 
+async def test_recorder_logs_downtime_and_marks_itself_alive_before_the_first_tick(settings):
+    import asyncio, time
+    db = DB(":memory:")
+    db.set("recorder_heartbeat", time.time() - 300)
+    rec = Recorder(settings, db, public=_Public({}, {}), slow=_Public({}, {}), http=httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda r: httpx.Response(200, json={}))))
+    task = asyncio.create_task(rec.run())
+    await asyncio.sleep(0.05)
+    assert time.time() - db.get("recorder_heartbeat") < 5      # a crash from here on still shows as downtime
+    rec._stop.set()
+    await task
+    down = json.loads(db.one("SELECT data FROM events WHERE kind='interruption'")["data"])
+    assert down["component"] == "recorder" and down["down_s"] >= 300
+    assert ex.status(db)["recorder_restarts"]["count"] == 1
+
+
 async def test_recorder_also_records_candidate_series_but_experiments_ignore_them(settings):
     import time
     from kbot.experiments import coverage
@@ -238,6 +256,7 @@ async def test_recorder_also_records_candidate_series_but_experiments_ignore_the
         200, json={"price": "81000.5", "time": "2026-10-23T18:00:48Z"})))
     db = DB(":memory:")
     rec = Recorder(settings, db, public=pub, slow=pub, http=cb)
+    await rec.discovery.refresh()
     await rec.tick(now)
     assert {r["ticker"] for r in db.q("SELECT ticker FROM snapshots")} == set(ms)
     assert {r["index_id"] for r in db.q("SELECT index_id FROM index_ticks")} == {"BTC-USD"}   # no Coinbase feed for FX

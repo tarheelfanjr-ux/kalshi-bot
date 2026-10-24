@@ -10,6 +10,8 @@ Trades at exactly our price do not fill us, since we do not know our place in th
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import random
 import re
@@ -292,6 +294,106 @@ class MakerEngine:
                 log.warning("result %s failed: %s", r["ticker"], e)
 
 
+# --- the frozen 14-day paper test (P1) --------------------------------------------------------
+
+# Frozen 2026-10-23 before any P1 data exists. Changing anything here makes a new test with a new hash.
+PAPER_TEST = {
+    "name": "P1",
+    "question": "Does E2's maker rule, placed under the configured $25 paper limits, earn after fees on fresh "
+                "live data?",
+    "series": list(SERIES),
+    "quote_rule": "E2's, unchanged: at each minute from 840 s to 60 s before close, a 1-contract bid at the best "
+                  "YES bid and one at the best NO bid, prices 0.05 to 0.95, each resting until the next minute",
+    "fill_rule": "a bid fills only when a public trade prints through its price at least 1 s after posting. A "
+                 "trade at our price never fills it. At most one fill per side per market",
+    "exit_rule": "none: every fill is held to settlement",
+    "fees": "the series' own fee (quadratic: zero for makers). Stress case: 0.0175 x p x (1 - p) per contract",
+    "slippage": "none: a maker fill is at the bid price or not at all",
+    "risk_limits": {"bankroll": 25.0, "max_position_risk_pct": 0.01, "max_open_risk_pct": 0.05,
+                    "max_daily_loss_pct": 0.02, "max_consecutive_losses": 5, "max_open_positions": 3,
+                    "max_market_inventory": 1},
+    "start": "the bot's first minute running on a fresh database created after this spec. Nothing earlier counts",
+    "days": 14,
+    "extend_by_gaps_over_s": 600,       # downtime never shortens the test
+    "void_if_gap_over_s": 7200,         # then start again with a fresh database
+    "stop_loss_usd": 5.0,               # account net loss that ends the test early as a FAIL
+    "primary": "paper account, what the limits let it place: net per settled contract, 95% CI over whole windows",
+    "secondary": "research log, every quote at 1 contract with no limits; fair_value shadow; no trade",
+    "pass": "account: 50+ settled trades, 95% CI above zero, mean above zero at the stress fee. Research log: "
+            "300+ fills over 100+ windows, 95% CI above zero, mean above zero at the stress fee. No gap over 2 h, "
+            "risk limits unchanged for the whole test",
+}
+
+
+def paper_test_hash() -> str:
+    return hashlib.sha256(json.dumps(PAPER_TEST, sort_keys=True).encode()).hexdigest()[:12]
+
+
+def _iso(t):
+    return datetime.fromtimestamp(t, timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def paper_test(db: DB, mode: str, log_rows: list[dict], net_pnl: float, now: float | None = None) -> dict:
+    """P1's state: where it stands, its data gaps, restarts, halts and settings, and the pass checks."""
+    now = now or time.time()
+    sp, out = PAPER_TEST, {"spec_hash": paper_test_hash()}
+    # The running bot writes equity every 60 s, so a stretch without rows is time it was down or stuck.
+    beats = [r["ts"] for r in db.q("SELECT ts FROM equity WHERE mode=? ORDER BY ts", (mode,))]
+    if not beats:
+        return {**out, "state": "not started"}
+    t0 = beats[0]
+    gaps = [(a, b - a - 60) for a, b in zip(beats, beats[1:] + [now]) if b - a - 60 > sp["extend_by_gaps_over_s"]]
+    end = t0 + sp["days"] * 86400 + sum(g for _, g in gaps)
+    restarts = db.q("SELECT data FROM events WHERE kind='interruption' AND mode=? AND ts>=?", (mode, t0))
+    down = [json.loads(r["data"])["down_s"] for r in restarts]
+    halted, since = 0.0, None
+    for e in db.q("SELECT ts, kind FROM events WHERE mode=? AND kind IN ('risk_trip','risk_clear') AND ts>=? "
+                  "ORDER BY ts", (mode, t0)):
+        if e["kind"] == "risk_trip" and since is None:
+            since = e["ts"]
+        elif e["kind"] == "risk_clear" and since is not None:
+            halted, since = halted + e["ts"] - since, None
+    halted += now - since if since is not None else 0
+    limits = {json.dumps(json.loads(r["data"]).get("limits"), sort_keys=True)
+              for r in db.q("SELECT data FROM events WHERE kind='startup' AND mode=? AND ts>=?", (mode, t0 - 300))}
+    unchanged = limits == {json.dumps(sp["risk_limits"], sort_keys=True)}
+    acct = []
+    for p in db.q("SELECT pnl, count, cost, close_ts FROM positions WHERE mode=? AND status='settled' AND count>0",
+                  (mode,)):
+        c = p["cost"] / p["count"]
+        acct.append({"window": p["close_ts"], "net": p["pnl"] / p["count"],
+                     "net_stress": p["pnl"] / p["count"] - MAKER_RATE * c * (1 - c)})
+    a, lg = summary(acct, "net"), summary(log_rows, "net")
+    void = any(g > sp["void_if_gap_over_s"] for _, g in gaps)
+    checks = {
+        "account_50_trades": a["n"] >= 50,
+        "account_ci_above_zero": bool(a["ci"] and a["ci"][0] > 0),
+        "account_positive_at_stress_fee": (summary(acct, "net_stress")["mean"] or 0) > 0,
+        "log_300_fills_100_windows": lg["n"] >= 300 and lg["windows"] >= 100,
+        "log_ci_above_zero": bool(lg["ci"] and lg["ci"][0] > 0),
+        "log_positive_at_stress_fee": (summary(log_rows, "net_if_maker_fee")["mean"] or 0) > 0,
+        "no_gap_over_2h": not void,
+        "risk_limits_unchanged": unchanged,
+    }
+    if void:
+        state = "VOID: a gap over 2 hours. Start again with a fresh database"
+    elif net_pnl <= -sp["stop_loss_usd"]:
+        state = f"FAIL: the account lost ${-net_pnl:.2f}, past the ${sp['stop_loss_usd']:g} stop"
+    elif now >= end:
+        state = "PASS" if all(checks.values()) else "FAIL"
+    else:
+        state = f"collecting: day {(now - t0) / 86400:.1f} of {sp['days']}"
+    return {**out, "state": state, "start_utc": _iso(t0), "end_utc": _iso(end),
+            "gaps_over_10_min": len(gaps), "longest_gap_min": round(max((g for _, g in gaps), default=0) / 60, 1),
+            "restarts": len(down), "longest_restart_down_s": max(down, default=0), "halted_h": round(halted / 3600, 2),
+            "risk_limits_unchanged": unchanged,
+            "executable": {"what": "paper account at the configured limits", "net_per_contract": a,
+                           "net_at_stress_fee": summary(acct, "net_stress")["mean"]},
+            "research_only": {"what": "every quote at 1 contract, no limits", "net_per_contract": lg,
+                              "net_at_stress_fee": summary(log_rows, "net_if_maker_fee")["mean"]},
+            "checks": checks}
+
+
 # --- report -----------------------------------------------------------------------------------
 
 def _won(side, result):
@@ -366,6 +468,7 @@ def report(db: DB, mode: str = "paper", bankroll: float = 25.0) -> dict:
             "signals": len(first), "settled": len(fv), "gross_per_contract": summary(fv, "gross"),
             "net_per_contract": summary(fv, "net")},
         "no_trade_baseline": {"net_pnl": 0.0},
+        "paper_test": paper_test(db, mode, rows, perf["net_pnl"]),
         "skips_24h": dict(sorted(skips.items(), key=lambda kv: -kv[1])[:8]),
         **({} if mode == "paper" else {"fill_model_check": check}),
     }
@@ -396,7 +499,19 @@ def format_report(rep: dict) -> str:
              f"fair_value shadow ({fv['what']}): {fv['signals']} signals, {fv['settled']} settled",
              f"  gross per contract {ci(fv['gross_per_contract'])}",
              f"  net per contract   {ci(fv['net_per_contract'])}",
-             "No-trade baseline: net 0.00", "", "Skipped quotes, last 24 h:"]
+             "No-trade baseline: net 0.00", ""]
+    if (pt := rep.get("paper_test")) and pt.get("start_utc"):
+        ex, rs = pt["executable"], pt["research_only"]
+        lines += [f"P1 frozen paper test (spec {pt['spec_hash']}): {pt['state']}. "
+                  f"{pt['start_utc']} to {pt['end_utc']}",
+                  f"  Executable ({ex['what']}): net per contract {ci(ex['net_per_contract'])}, "
+                  f"{ex['net_per_contract']['n']} trades, at the stress fee {num(ex['net_at_stress_fee'])}",
+                  f"  Research only ({rs['what']}): net per contract {ci(rs['net_per_contract'])}",
+                  f"  Data: {pt['gaps_over_10_min']} gaps over 10 min (longest {pt['longest_gap_min']} min), "
+                  f"{pt['restarts']} restarts (longest down {pt['longest_restart_down_s']:.0f} s), "
+                  f"halted {pt['halted_h']} h, risk limits {'unchanged' if pt['risk_limits_unchanged'] else 'CHANGED'}",
+                  "  Checks: " + ", ".join(f"{k} {'yes' if v else 'no'}" for k, v in pt["checks"].items()), ""]
+    lines += ["Skipped quotes, last 24 h:"]
     lines += [f"  {n:6d}  {k}" for k, n in rep["skips_24h"].items()] or ["  none"]
     if (c := rep.get("fill_model_check")):
         lines += ["", "Fill model check, closed quotes with a real order (tape rule vs exchange): "

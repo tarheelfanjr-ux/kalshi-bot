@@ -611,6 +611,9 @@ def status(db: DB, now: float | None = None) -> dict:
     out = {"label": LABEL, "now": _iso(now), "prospective_start": _iso(PROSPECTIVE_START)}
     hb = db.get("recorder_heartbeat")
     out["recorder_heartbeat_age_s"] = None if hb is None else round(now - hb)
+    downs = [r["s"] for r in db.q("SELECT json_extract(data, '$.down_s') s FROM events WHERE kind='interruption' "
+                                  "AND json_extract(data, '$.component')='recorder' AND ts>=?", (PROSPECTIVE_START,))]
+    out["recorder_restarts"] = {"count": len(downs), "longest_down_min": round(max(downs, default=0) / 60, 1)}
     fee = db.one("SELECT ts, data FROM events WHERE kind='fee_state' ORDER BY ts DESC LIMIT 1")
     out["latest_fee_state"] = None if fee is None else {"at": _iso(fee["ts"]), **json.loads(fee["data"])}
     for name in SPECS:

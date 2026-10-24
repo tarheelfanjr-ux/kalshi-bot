@@ -1,0 +1,14 @@
+# Paper bot as a systemd user service. Install: see docs/HOSTING.md.
+[Unit]
+Description=kbot maker paper bot (paper mode only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/kalshi-bot
+ExecStart=%h/kalshi-bot/.venv/bin/python -m kbot --config config.maker.toml --log-level WARNING run
+Restart=always
+RestartSec=30
+
+[Install]
+WantedBy=default.target

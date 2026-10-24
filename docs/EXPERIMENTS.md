@@ -29,8 +29,71 @@ Rules the code enforces:
 
 Running it: see [OPERATING_MANUAL.md](OPERATING_MANUAL.md#prospective-experiments).
 
-The maker paper bot (`config.maker.toml`) runs E2's rule live as a short, labelled paper test. It
+The maker paper bot (`config.maker.toml`) runs E2's rule live. Its 14-day run is test P1 below. P1
 shares E2's data from Oct 24 on but not its verdict: E2 is still read once, by its frozen rule.
+
+## P1: the 14-day paper test of the maker bot (frozen 2026-10-23)
+
+P1 asks one question: does E2's rule, placed under the configured $25 paper limits, earn after fees
+on fresh live data? The spec is `PAPER_TEST` in `kbot/maker.py`. `kbot --config config.maker.toml
+status` prints its hash, its state and every check. Changing the spec or the limits makes a new test.
+
+**Which variant, and why.** Cole asked for first-minute quotes only if the existing evidence supports
+them. One check on the same 1,298 pre-holdout markets as the saved history (seed 7, no holdout data):
+
+| Rule | Fills | Net per contract (95% CI) |
+|---|---|---|
+| Every minute from 840 s to 60 s left (E2) | 2,596 | -1.82 c (-2.06 to -1.59) |
+| First-minute quote only (840 s left) | 2,117 | -1.91 c (-2.95 to -0.88) |
+| Bids at 0.25 or less only, E2 | 61 | -7.93 c (-15.83 to +0.89) |
+| Bids at 0.25 or less only, first minute | 56 | -6.77 c (-15.29 to +3.00) |
+
+First-minute quotes do no better. Both sides fill on the first quote in 63% of markets, but the rest
+lose more than those pairs earn. So P1 keeps E2's rule unchanged. No other variant was tried. The
+last two rows are roughly what the $25 limits allow (at most $0.25 at risk per position), and they
+are worse. This is evidence against the rule, recorded before P1 starts.
+
+**Rules (all fixed).**
+
+- Markets: KXBTC15M, KXETH15M, KXSOL15M, KXXRP15M.
+- Entry: at each minute from 840 s to 60 s before close, a 1-contract bid at the best YES bid and
+  one at the best NO bid, prices 0.05 to 0.95, each resting until the next minute.
+- Fills: a bid fills only when a public trade prints through its price at least 1 s after posting.
+  A trade at our price never fills it. At most one fill per side per market.
+- Exit: none. Every fill is held to settlement.
+- Fees: the series' own fee (quadratic, so zero for makers). Stress case: 0.0175 x p x (1 - p).
+- Slippage: none. A maker fill is at the bid price or not at all.
+- Risk limits: bankroll $25, 1% worst-case loss per position, 5% open risk, 2% daily loss, halt after
+  5 losses in a row, at most 3 open markets, 1 contract per market side. These are the limits the
+  bot runs with. They are not raised to let the account hold both sides.
+
+**Two results, kept apart.**
+
+- **Executable (primary):** the paper account, which places only what the limits allow. Net per
+  settled contract with a 95% CI over whole windows.
+- **Research only:** the research log, every quote at 1 contract with no limits. It shows whether
+  the rule earns at all. It is not a result anyone could have traded at $25.
+
+**Start, length, stops.**
+
+- Start: the bot's first minute running on a fresh database, created after this spec. Nothing from
+  the cloud runs of 2026-10-23 counts.
+- Length: 14 days, plus the length of every gap over 10 minutes, so downtime never shortens it. A
+  gap is a stretch with no per-minute equity row from the bot.
+- Void: any gap over 2 hours. Start again with a fresh database.
+- Early stop: if the account's net loss reaches $5 (20% of the bankroll), P1 ends as a FAIL.
+- Risk halts work as configured. The owner resumes them after review. Halted time is reported.
+- No tuning: nothing in the spec, the code paths it uses or the limits changes during the test.
+  Every startup logs the limits it runs with, and `status` flags any change.
+
+**Pass, read once at the end.** All of these:
+
+- Account: 50+ settled trades, 95% CI above zero, mean above zero at the stress fee.
+- Research log: 300+ fills over 100+ windows, 95% CI above zero, mean above zero at the stress fee.
+- No gap over 2 hours, and the risk limits unchanged for the whole test.
+
+A PASS allows stage 2 (demo) in [GO_LIVE.md](GO_LIVE.md). It is not evidence of a real-money edge:
+paper fills assume we are at the back of the queue, and real queue position is unknown.
 
 ## Candidate series: recorded, not frozen
 
